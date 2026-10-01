@@ -1,8 +1,8 @@
 package com.aura.agent.trading.models
 
 enum class MarketType {
-    IRAN_STOCK,   // بورس ایران
-    CRYPTO        // رمزارز دیجیتال
+    IRAN_STOCK,
+    CRYPTO
 }
 
 enum class OrderSide {
@@ -14,8 +14,8 @@ enum class OrderStatus {
 }
 
 enum class TradingMode {
-    PAPER,    // شبیه‌سازی — بدون پول واقعی
-    LIVE      // معامله واقعی (فعلاً خاموش تا تأیید صریح کاربر)
+    PAPER,
+    LIVE
 }
 
 data class Symbol(
@@ -28,7 +28,7 @@ data class Symbol(
 data class TradeSignal(
     val symbol: Symbol,
     val side: OrderSide,
-    val confidence: Double,      // 0.0 تا 1.0
+    val confidence: Double,
     val reason: String,
     val suggestedPrice: Double? = null,
     val stopLoss: Double? = null,
@@ -74,10 +74,10 @@ data class PortfolioSnapshot(
 )
 
 data class RiskConfig(
-    val maxRiskPerTradePercent: Double = 1.5,   // حداکثر ریسک هر معامله: 1.5%
-    val maxDailyLossPercent: Double = 3.0,      // سقف ضرر روزانه: 3%
+    val maxRiskPerTradePercent: Double = 1.5,
+    val maxDailyLossPercent: Double = 3.0,
     val maxOpenPositions: Int = 5,
-    val maxPositionPercent: Double = 20.0,      // حداکثر سرمایه روی یک نماد
-    val minConfidence: Double = 0.65,           // حداقل اعتماد برای اجرای خودکار
+    val maxPositionPercent: Double = 20.0,
+    val minConfidence: Double = 0.65,
     val enableKillSwitch: Boolean = true
 )
