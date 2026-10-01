@@ -12,13 +12,31 @@ android {
         applicationId = "com.aura.agent"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "2.0.0"
+        versionCode = 3
+        versionName = "2.1.0-secure"
 
         val localProperties = com.android.build.gradle.internal.cxx.configure.gradleLocalProperties(rootDir)
-        buildConfigField("String", "AURA_API_KEY", "\"${localProperties.getProperty("AURA_API_KEY", "")}\"")
-        buildConfigField("String", "AURA_BASE_URL", "\"${localProperties.getProperty("AURA_BASE_URL", "https://api.x.ai/v1")}\"")
-        buildConfigField("String", "AURA_MODEL", "\"${localProperties.getProperty("AURA_MODEL", "grok-beta")}\"")
+        val apiKey = localProperties.getProperty("AURA_API_KEY", "")
+        val baseUrl = localProperties.getProperty("AURA_BASE_URL", "https://api.x.ai/v1")
+        val model = localProperties.getProperty("AURA_MODEL", "grok-beta")
+
+        // فقط از local.properties — در CI بدون کلید هم build می‌شود
+        buildConfigField("String", "AURA_API_KEY", "\"$apiKey\"")
+        buildConfigField("String", "AURA_BASE_URL", "\"$baseUrl\"")
+        buildConfigField("String", "AURA_MODEL", "\"$model\"")
+    }
+
+    buildTypes {
+        getByName("release") {
+            isMinifyEnabled = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
+        getByName("debug") {
+            isMinifyEnabled = false
+        }
     }
 
     buildFeatures {
@@ -54,12 +72,13 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
 
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 
-    // DataStore for long-term memory
     implementation("androidx.datastore:datastore-preferences:1.1.1")
+
+    // Secure storage
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

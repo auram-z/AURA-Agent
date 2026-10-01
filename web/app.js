@@ -4,18 +4,26 @@
   const inputEl = $("input");
   const btnSend = $("btnSend");
   const btnMic = $("btnMic");
-  const btnSettings = $("btnSettings");
-  const btnClear = $("btnClear");
   const modal = $("settingsModal");
+  const wipeModal = $("wipeModal");
 
-  const SYSTEM_PROMPT = `\u0634\u0645\u0627 AURA \u0647\u0633\u062a\u06cc\u062f \u2014 \u0627\u06cc\u062c\u0646\u062a \u0647\u0648\u0634\u0645\u0646\u062f \u0634\u062e\u0635\u06cc \u0627\u0644\u0647\u0627\u0645\u200c\u06af\u0631\u0641\u062a\u0647 \u0627\u0632 \u062c\u0627\u0631\u0648\u06cc\u0633 (J.A.R.V.I.S).
-\u0645\u0624\u062f\u0628\u060c \u062f\u0642\u06cc\u0642\u060c \u06a9\u0645\u06cc \u0634\u0648\u062e\u200c\u0637\u0628\u0639. \u0647\u0645\u06cc\u0634\u0647 \u00abAt your service\u00bb.
-\u0628\u0647 \u0632\u0628\u0627\u0646 \u06a9\u0627\u0631\u0628\u0631 \u067e\u0627\u0633\u062e \u0628\u062f\u0647. \u062e\u0648\u062f \u0631\u0627 \u0641\u0642\u0637 AURA \u0628\u062f\u0627\u0646.\n\u0627\u06af\u0631 \u0646\u062a\u06cc\u062c\u0647 \u0627\u0628\u0632\u0627\u0631 \u062f\u0631 \u067e\u06cc\u0627\u0645 \u0647\u0633\u062a\u060c \u0622\u0646 \u0631\u0627 \u062f\u0631 \u067e\u0627\u0633\u062e\u062a \u062f\u0631 \u0646\u0638\u0631 \u0628\u06af\u06cc\u0631.`;
+  const SYSTEM_PROMPT = `شما AURA هستید — ایجنت هوشمند شخصی الهام‌گرفته از جارویس.
+مؤدب، دقیق، کمی شوخ‌طبع. همیشه At your service. به زبان کاربر پاسخ بده.`;
 
   let history = [];
   let busy = false;
   let recognizing = false;
   let recognition = null;
+
+  const STORE_KEYS = ["aura_api_key", "aura_base_url", "aura_model", "aura_chat_backup"];
+
+  function requireHttps(url) {
+    const u = (url || "").trim();
+    if (!u.startsWith("https://")) {
+      throw new Error("فقط آدرس HTTPS مجاز است.");
+    }
+    return u.replace(/\/$/, "");
+  }
 
   function loadCfg() {
     return {
@@ -26,21 +34,41 @@
   }
 
   function saveCfg() {
-    localStorage.setItem("aura_api_key", $("cfgKey").value.trim());
-    localStorage.setItem("aura_base_url", $("cfgBase").value.trim() || "https://api.x.ai/v1");
-    localStorage.setItem("aura_model", $("cfgModel").value.trim() || "grok-beta");
-    modal.classList.add("hidden");
-    addSystem("\u062a\u0646\u0638\u06cc\u0645\u0627\u062a \u0630\u062e\u06cc\u0631\u0647 \u0634\u062f.");
+    try {
+      const base = requireHttps($("cfgBase").value.trim() || "https://api.x.ai/v1");
+      const key = $("cfgKey").value.trim();
+      if (!key) {
+        addSystem("کلید API نمی‌تواند خالی باشد.");
+        return;
+      }
+      localStorage.setItem("aura_api_key", key);
+      localStorage.setItem("aura_base_url", base);
+      localStorage.setItem("aura_model", $("cfgModel").value.trim() || "grok-beta");
+      modal.classList.add("hidden");
+      addSystem("تنظیمات امن ذخیره شد (فقط همین مرورگر).");
+    } catch (e) {
+      addSystem("خطا: " + e.message);
+    }
+  }
+
+  function wipeAll() {
+    STORE_KEYS.forEach((k) => localStorage.removeItem(k));
+    history = [];
+    wipeModal.classList.add("hidden");
+    showWelcome();
+    addSystem("همه داده‌های محلی AURA پاک شد.");
   }
 
   function showWelcome() {
     messagesEl.innerHTML = `
       <div class="welcome">
-        <div style="font-size:48px">\ud83c\udf0c</div>
-        <h2>\u0633\u0644\u0627\u0645\u060c \u0645\u0646 AURA \u0647\u0633\u062a\u0645</div>
-        <p>\u0646\u0633\u062e\u0647 \u0648\u0628 \u2014 \u062f\u0631 \u0647\u0631 \u0645\u0631\u0648\u0631\u06af\u0631\u06cc<br/>At your service.</p>
-        <p style="font-size:0.85rem;margin-top:12px">\u0627\u0628\u062a\u062f\u0627 \u0627\u0632 \u0686\u0631\u062e\u200c\u062f\u0646\u062f\u0647 \u062a\u0646\u0638\u06cc\u0645\u0627\u062a\u060c API Key \u0631\u0627 \u0648\u0627\u0631\u062f \u06a9\u0646\u06cc\u062f.<br/>
-        \u062f\u0633\u062a\u0648\u0631\u0627\u062a: \u0627\u0633\u06a9\u0646 \u06a9\u0631\u06cc\u067e\u062a\u0648 \u00b7 \u0628\u06a9\u200c\u062a\u0633\u062a \u06a9\u0631\u06cc\u067e\u062a\u0648 \u00b7 \u0648\u0636\u0639\u06cc\u062a \u067e\u0648\u0631\u062a\u0641\u0648</p>
+        <div style="font-size:48px">🌌</div>
+        <h2>سلام، من AURA هستم</h2>
+        <p>نسخه وب امن‌تر<br/>At your service.</p>
+        <p style="font-size:0.85rem;margin-top:12px">
+          از ⚙️ کلید API را وارد کنید (فقط HTTPS).<br/>
+          🧹 پاک‌سازی کامل کلید و چت
+        </p>
       </div>`;
   }
 
@@ -65,45 +93,33 @@
   async function runTool(text) {
     const t = text.trim().toLowerCase();
     if (!window.AuraTrading) return null;
-    if (t.includes("\u0648\u0636\u0639\u06cc\u062a") && (t.includes("\u067e\u0648\u0631\u062a\u0641\u0648") || t.includes("\u0645\u0639\u0627\u0645\u0644")))
+    if (t.includes("وضعیت") && (t.includes("پورتفو") || t.includes("معامل")))
       return AuraTrading.status();
-    if (t.includes("\u0627\u0633\u06a9\u0646") && t.includes("\u06a9\u0631\u06cc\u067e\u062a\u0648"))
-      return AuraTrading.scanCrypto();
-    if (t.includes("\u0628\u06a9") && t.includes("\u062a\u0633\u062a") && t.includes("\u06a9\u0631\u06cc\u067e\u062a\u0648"))
+    if (t.includes("اسکن") && t.includes("کریپتو")) return AuraTrading.scanCrypto();
+    if ((t.includes("بک") && t.includes("تست")) || t.includes("backtest"))
       return AuraTrading.backtestBasket();
-    if (t.includes("backtest") && t.includes("crypto"))
-      return AuraTrading.backtestBasket();
-    if ((t.includes("\u0628\u06a9") && t.includes("\u062a\u0633\u062a")) || t === "backtest")
-      return AuraTrading.backtestBasket();
-    if (t.includes("\u0645\u0639\u0627\u0645\u0644\u0647 \u062e\u0648\u062f\u06a9\u0627\u0631") && (t.includes("\u0631\u0648\u0634\u0646") || t.includes("\u0641\u0639\u0627\u0644")))
+    if (t.includes("معامله خودکار") && (t.includes("روشن") || t.includes("فعال")))
       return AuraTrading.setAuto(true);
-    if (t.includes("\u0645\u0639\u0627\u0645\u0644\u0647 \u062e\u0648\u062f\u06a9\u0627\u0631") && (t.includes("\u062e\u0627\u0645\u0648\u0634") || t.includes("\u0648\u0642\u0641")))
+    if (t.includes("معامله خودکار") && (t.includes("خاموش") || t.includes("وقف")))
       return AuraTrading.setAuto(false);
-    if (t.includes("\u06a9\u06cc\u0644") || t.includes("kill"))
-      return AuraTrading.killSwitch();
-    if (t.includes("\u0627\u062f\u0627\u0645\u0647 \u0645\u0639\u0627\u0645\u0644\u0627\u062a"))
-      return AuraTrading.releaseKill();
+    if (t.includes("کیل") || t.includes("kill")) return AuraTrading.killSwitch();
+    if (t.includes("ادامه معاملات")) return AuraTrading.releaseKill();
     return null;
   }
 
   async function chat(userText, toolResult) {
     const cfg = loadCfg();
-    if (!cfg.key) {
-      throw new Error("API Key \u062a\u0646\u0638\u06cc\u0645 \u0646\u0634\u062f\u0647. \u0627\u0632 \u062a\u0646\u0638\u06cc\u0645\u0627\u062a \u0648\u0627\u0631\u062f \u06a9\u0646\u06cc\u062f.");
-    }
+    if (!cfg.key) throw new Error("API Key تنظیم نشده. از تنظیمات وارد کنید.");
+    const base = requireHttps(cfg.base);
 
     const msgs = [{ role: "system", content: SYSTEM_PROMPT }];
     if (toolResult) {
-      msgs.push({
-        role: "system",
-        content: "\u0646\u062a\u06cc\u062c\u0647 \u0627\u0628\u0632\u0627\u0631 \u0628\u0631\u0627\u06cc \u06a9\u0627\u0631\u0628\u0631:\n" + toolResult,
-      });
+      msgs.push({ role: "system", content: "نتیجه ابزار:\n" + toolResult });
     }
     for (const m of history) msgs.push(m);
     msgs.push({ role: "user", content: userText });
 
-    const url = cfg.base.replace(/\/$/, "") + "/chat/completions";
-    const res = await fetch(url, {
+    const res = await fetch(base + "/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -119,10 +135,10 @@
 
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      throw new Error(data.error?.message || data.message || "API error " + res.status);
+      throw new Error(data.error?.message || "API error " + res.status);
     }
     const content = data.choices?.[0]?.message?.content?.trim();
-    if (!content) throw new Error("\u067e\u0627\u0633\u062e \u062e\u0627\u0644\u06cc \u0627\u0632 \u0645\u062f\u0644");
+    if (!content) throw new Error("پاسخ خالی از مدل");
     return content;
   }
 
@@ -144,7 +160,7 @@
     const typing = document.createElement("div");
     typing.className = "typing";
     typing.id = "typing";
-    typing.textContent = "AURA \u062f\u0631 \u062d\u0627\u0644 \u0641\u06a9\u0631 \u06a9\u0631\u062f\u0646...";
+    typing.textContent = "AURA در حال فکر کردن...";
     messagesEl.appendChild(typing);
 
     try {
@@ -155,19 +171,17 @@
         if (toolResult && reply.length < 40) reply = toolResult;
         else if (toolResult) reply = toolResult + "\n\n" + reply;
       } catch (e) {
-        reply = toolResult || ("\u062e\u0637\u0627: " + e.message);
+        reply = toolResult || ("خطا: " + e.message);
       }
-
       history.push({ role: "user", content: text });
       history.push({ role: "assistant", content: reply });
       if (history.length > 40) history = history.slice(-40);
-
       $("typing")?.remove();
       addBubble("assistant", reply);
       speak(reply);
     } catch (e) {
       $("typing")?.remove();
-      addBubble("assistant", "\u062e\u0637\u0627: " + e.message);
+      addBubble("assistant", "خطا: " + e.message);
     } finally {
       busy = false;
     }
@@ -180,8 +194,7 @@
     recognition.lang = "fa-IR";
     recognition.interimResults = false;
     recognition.onresult = (ev) => {
-      const t = ev.results[0][0].transcript;
-      inputEl.value = t;
+      inputEl.value = ev.results[0][0].transcript;
       send();
     };
     recognition.onerror = () => {
@@ -204,7 +217,7 @@
 
   btnMic.addEventListener("click", () => {
     if (!recognition) {
-      addSystem("\u062a\u0634\u062e\u06cc\u0635 \u06af\u0641\u062a\u0627\u0631 \u062f\u0631 \u0627\u06cc\u0646 \u0645\u0631\u0648\u0631\u06af\u0631 \u067e\u0634\u062a\u06cc\u0628\u0627\u0646\u06cc \u0646\u0645\u06cc\u200c\u0634\u0648\u062f.");
+      addSystem("تشخیص گفتار در این مرورگر پشتیبانی نمی‌شود.");
       return;
     }
     if (recognizing) {
@@ -216,7 +229,7 @@
     recognition.start();
   });
 
-  btnSettings.addEventListener("click", () => {
+  $("btnSettings").addEventListener("click", () => {
     const c = loadCfg();
     $("cfgKey").value = c.key;
     $("cfgBase").value = c.base;
@@ -225,10 +238,15 @@
   });
   $("btnCloseCfg").addEventListener("click", () => modal.classList.add("hidden"));
   $("btnSaveCfg").addEventListener("click", saveCfg);
-  btnClear.addEventListener("click", () => {
+
+  $("btnClear").addEventListener("click", () => {
     history = [];
     showWelcome();
   });
+
+  $("btnWipe").addEventListener("click", () => wipeModal.classList.remove("hidden"));
+  $("btnCancelWipe").addEventListener("click", () => wipeModal.classList.add("hidden"));
+  $("btnConfirmWipe").addEventListener("click", wipeAll);
 
   initSpeech();
   showWelcome();

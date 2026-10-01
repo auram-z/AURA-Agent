@@ -1,40 +1,43 @@
-# \ud83c\udf0c AURA-Agent
+# 🌌 AURA-Agent
 
-**\u062f\u0633\u062a\u06cc\u0627\u0631 \u0647\u0648\u0634\u0645\u0646\u062f \u062c\u0627\u0631\u0648\u06cc\u0633\u200c\u0648\u0627\u0631 \u2014 \u0627\u0646\u062f\u0631\u0648\u06cc\u062f + \u0648\u0628**
+**دستیار هوشمند جارویس‌وار — اندروید + وب**
 
-> *\"At your service.\"*
+> *"At your service."*
 
 ---
 
-## \u2705 \u062f\u0648 \u0646\u0633\u062e\u0647
+## نسخه‌ها
 
-| \u0646\u0633\u062e\u0647 | \u0645\u0633\u06cc\u0631 |
+| نسخه | مسیر |
 |--------|--------|
-| **\u0627\u0646\u062f\u0631\u0648\u06cc\u062f** | \u067e\u0631\u0648\u0698\u0647 Kotlin/Compose (\u0631\u06cc\u0634\u0647 \u0627\u0635\u0644\u06cc) |
-| **\u0648\u0628** | \u0641\u0648\u0644\u062f\u0631 [`web/`](web/) \u2014 \u0647\u0631 \u0645\u0631\u0648\u0631\u06af\u0631\u06cc |
+| اندروید | پروژه Kotlin/Compose |
+| وب | [`web/`](web/) |
 
-### \u0627\u062c\u0631\u0627\u06cc \u0646\u0633\u062e\u0647 \u0648\u0628 (\u0633\u0631\u06cc\u0639)
+## امنیت (v2.1)
+
+- `.gitignore` قوی برای secretها و APK
+- اندروید: `usesCleartextTraffic=false`، `allowBackup=false`، Keystore/`SecureStore`
+- وب: CSP + اجبار HTTPS + پاک‌سازی کامل داده
+- جزئیات: [SECURITY.md](SECURITY.md)
+
+## اجرای وب
 
 ```bash
-git clone https://github.com/auram-z/AURA-Agent.git
-cd AURA-Agent/web
-python -m http.server 8080
+cd web && python -m http.server 8080
 ```
 
-\u0633\u067e\u0633 \u0628\u0627\u0632 \u06a9\u0646: http://localhost:8080  
-\u0633\u067e\u0633 API Key \u0631\u0627 \u0627\u0632 \u062f\u06a9\u0645\u0647 \u062a\u0646\u0638\u06cc\u0645\u0627\u062a \u0648\u0627\u0631\u062f \u06a9\u0646.
+## اجرای اندروید
+
+`local.properties` (commit نشود):
+
+```properties
+AURA_API_KEY=...
+AURA_BASE_URL=https://api.x.ai/v1
+AURA_MODEL=grok-beta
+```
+
+> معامله واقعی (LIVE) خاموش است — فقط Paper Trading.
 
 ---
 
-## \u0648\u06cc\u0698\u06af\u06cc\u200c\u0647\u0627
-
-- \u0686\u062a + \u0634\u062e\u0635\u06cc\u062a \u062c\u0627\u0631\u0648\u06cc\u0633
-- \u0635\u062f\u0627 (\u0645\u0648\u0628\u0627\u06cc\u0644 \u0648 \u0648\u0628)
-- Paper Trading + \u0627\u0633\u06a9\u0646 / \u0628\u06a9\u200c\u062a\u0633\u062a \u06a9\u0631\u06cc\u067e\u062a\u0648
-- \u0645\u062f\u06cc\u0631\u06cc\u062a \u0631\u06cc\u0633\u06a9 \u0648 Kill Switch
-
-> \u26a0\ufe0f \u0645\u0639\u0627\u0645\u0644\u0647 \u0648\u0627\u0642\u0639\u06cc (LIVE) \u062e\u0627\u0645\u0648\u0634 \u0627\u0633\u062a.
-
----
-
-*\"At your service.\" \u2014 AURA*
+*"At your service." — AURA*

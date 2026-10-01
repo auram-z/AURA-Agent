@@ -1,0 +1,42 @@
+# Secrets & local config
+local.properties
+*.properties
+!gradle.properties
+.env
+.env.*
+*.pem
+*.p12
+*.jks
+*.keystore
+credentials*
+secrets*
+
+# Android
+*.apk
+*.aab
+*.ap_
+*.dex
+bin/
+gen/
+out/
+build/
+.gradle/
+captures/
+.externalNativeBuild/
+.cxx/
+*.hprof
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.swp
+.DS_Store
+
+# Node / misc
+node_modules/
+npm-debug.log
+*.log
+
+# Web local overrides
+web/config.local.js
