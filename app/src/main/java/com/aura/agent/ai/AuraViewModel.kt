@@ -79,18 +79,16 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
             lower.contains("باتری") -> tools.executeTool("get_battery")
             lower.contains("دستگاه") || lower.contains("مدل گوشی") -> tools.executeTool("get_device_info")
 
-            // Trading
-            lower.contains("وضعیت معاملات") || lower.contains("پورتفو") || lower.contains("trading status") ||
+            lower.contains("وضعیت معاملات") || lower.contains("پورتفو") ||
             lower.contains("وضعیت پورتفو") -> tools.executeTool("trading_status")
 
-            lower.contains("اسکن بورس") || lower.contains("بورس ایران") || lower.contains("scan iran") ->
+            lower.contains("اسکن بورس") || lower.contains("بورس ایران") ->
                 tools.executeTool("scan_iran")
 
-            lower.contains("اسکن کریپتو") || lower.contains("کریپتو") || lower.contains("scan crypto") ->
-                tools.executeTool("scan_crypto")
+            lower.contains("اسکن کریپتو") -> tools.executeTool("scan_crypto")
 
             lower.contains("معامله خودکار") && (lower.contains("روش
-") || lower.contains("فعال") || lower.contains("شروع")) ->
+") || lower.contains("فعال")) ->
                 tools.executeTool("auto_on")
 
             lower.contains("معامله خودکار") && (lower.contains("خاموش") || lower.contains("وقف")) ->
@@ -99,8 +97,21 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
             lower.contains("کیل سوییچ") || lower.contains("kill switch") || lower.contains("توقف اورژانسی") ->
                 tools.executeTool("kill_switch")
 
-            lower.contains("ادامه معاملات") || lower.contains("رد کیل") ->
-                tools.executeTool("release_kill")
+            // Backtest
+            lower.contains("بک‌تست") && lower.contains("بورس") -> tools.backtestIran()
+            lower.contains("بک تست") && lower.contains("بورس") -> tools.backtestIran()
+            lower.contains("backtest") && lower.contains("iran") -> tools.backtestIran()
+
+            lower.contains("بک‌تست") && (lower.contains("btc") || lower.contains("بیتکوین")) ->
+                tools.backtestCryptoSymbol("BTCUSDT")
+            lower.contains("بک‌تست") && (lower.contains("eth") || lower.contains("اتر")) ->
+                tools.backtestCryptoSymbol("ETHUSDT")
+
+            lower.contains("بک‌تست") && lower.contains("کریپتو") -> tools.backtestCrypto()
+            lower.contains("بک تست") && lower.contains("کریپتو") -> tools.backtestCrypto()
+            lower.contains("backtest") && lower.contains("crypto") -> tools.backtestCrypto()
+            lower.contains("بک‌تست") || lower.contains("بک تست") || lower.contains("backtest") ->
+                tools.backtestCrypto()
 
             else -> null
         }

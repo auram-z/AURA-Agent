@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.os.BatteryManager
 import android.os.Build
+import com.aura.agent.trading.BacktestEngine
 import com.aura.agent.trading.TradingEngine
 import com.aura.agent.trading.models.MarketType
 import com.aura.agent.trading.models.OrderSide
@@ -15,6 +16,7 @@ import java.util.Locale
 class AuraTools(private val context: Context) {
 
     private val tradingEngine = TradingEngine()
+    private val backtestEngine = BacktestEngine()
 
     fun getCurrentTime(): String {
         val sdf = SimpleDateFormat("HH:mm — EEEE d MMMM yyyy", Locale("fa"))
@@ -39,20 +41,12 @@ class AuraTools(private val context: Context) {
         return "اطلاعات دستگاه:\n- مدل: ${Build.MODEL}\n- سازنده: ${Build.MANUFACTURER}\n- اندروید: ${Build.VERSION.RELEASE}"
     }
 
-    // ─── Trading Tools ───
-
     fun tradingStatus(): String = tradingEngine.getStatus()
-
     fun scanIranStock(): String = tradingEngine.runScan(MarketType.IRAN_STOCK)
-
     fun scanCrypto(): String = tradingEngine.runScan(MarketType.CRYPTO)
-
     fun enableAutoTrading(): String = tradingEngine.setAutoTrading(true)
-
     fun disableAutoTrading(): String = tradingEngine.setAutoTrading(false)
-
     fun killSwitch(reason: String = "دستور کاربر"): String = tradingEngine.activateKillSwitch(reason)
-
     fun releaseKillSwitch(): String = tradingEngine.deactivateKillSwitch()
 
     fun buy(ticker: String, market: String = "crypto"): String {
@@ -65,21 +59,30 @@ class AuraTools(private val context: Context) {
         return tradingEngine.manualOrder(ticker, OrderSide.SELL, m)
     }
 
+    // ─── Backtest ───
+    fun backtestCrypto(): String = backtestEngine.runCryptoBasket()
+
+    fun backtestCryptoSymbol(ticker: String): String {
+        val result = backtestEngine.runCrypto(ticker)
+        return result.summary()
+    }
+
+    fun backtestIran(): String = backtestEngine.runIranBasket()
+
     fun getAvailableToolsDescription(): String {
         return """
 ابزارهای AURA:
-1. get_time / زمان
-2. get_battery / باتری
-3. get_device_info / دستگاه
-4. trading_status / وضعیت معاملات
-5. scan_iran / اسکن بورس ایران
-6. scan_crypto / اسکن کریپتو
-7. auto_on / فعال‌سازی معامله خودکار (Paper)
-8. auto_off / خاموش معامله خودکار
-9. kill_switch / توقف اورژانسی همه معاملات
-10. buy / sell - سفارش دستی (Paper)
+1. زمان / باتری / دستگاه
+2. وضعیت پورتفو
+3. اسکن بورس / اسکن کریپتو
+4. معامله خودکار روش
+/خاموش
+5. کیل سوییچ
+6. بک‌تست کریپتو — بک‌تست SMA+RSI روی کندل‌های واقعی
+7. بک‌تست بورس — بک‌تست روی داده نمونه بورس
+8. بک‌تست BTC / ETH / ... — بک‌تست یک نماد
 
-⚠️ همه معاملات فعلاً در حالت Paper Trading هستند (بدون پول واقعی).
+⚠️ همه معاملات زنده فقط Paper هستند.
         """.trim()
     }
 
@@ -91,11 +94,12 @@ class AuraTools(private val context: Context) {
             "trading_status", "status", "وضعیت", "پورتفو" -> tradingStatus()
             "scan_iran", "اسکن بورس", "بورس" -> scanIranStock()
             "scan_crypto", "اسکن کریپتو", "کریپتو" -> scanCrypto()
-            "auto_on", "خودکار روش
-" -> enableAutoTrading()
-            "auto_off", "خودکار خاموش" -> disableAutoTrading()
+            "auto_on" -> enableAutoTrading()
+            "auto_off" -> disableAutoTrading()
             "kill_switch", "توقف" -> killSwitch(arg.ifBlank { "دستور کاربر" })
             "release_kill", "ادامه" -> releaseKillSwitch()
+            "backtest_crypto", "بک‌تست کریپتو" -> backtestCrypto()
+            "backtest_iran", "بک‌تست بورس" -> backtestIran()
             else -> "ابزار «$toolName» شناخته است."
         }
     }

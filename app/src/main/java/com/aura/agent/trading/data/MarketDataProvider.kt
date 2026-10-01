@@ -4,7 +4,6 @@ import com.aura.agent.trading.models.MarketType
 import com.aura.agent.trading.models.Symbol
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
@@ -28,25 +27,20 @@ data class MarketQuote(
     val candles: List<Candle> = emptyList()
 )
 
-/**
- * تامین‌کننده داده بازار
- * کریپتو: Binance Public API (بدون نیاز به API Key)
- * بورس ایران: ساختار آماده + داده نمونه/پشتیبان (تا زمان وصل API رسمی)
- */
 class MarketDataProvider {
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
+        .readTimeout(25, TimeUnit.SECONDS)
         .build()
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    suspend fun getCryptoQuote(ticker: String): MarketQuote? = withContext(Dispatchers.IO) {
+    suspend fun getCryptoQuote(ticker: String, klineLimit: Int = 100): MarketQuote? = withContext(Dispatchers.IO) {
         try {
             val pair = normalizeCryptoSymbol(ticker)
             val price = fetchBinancePrice(pair) ?: return@withContext null
-            val candles = fetchBinanceKlines(pair, limit = 50)
+            val candles = fetchBinanceKlines(pair, limit = klineLimit)
             val change = if (candles.size >= 2) {
                 val old = candles.first().close
                 if (old > 0) ((price - old) / old) * 100 else 0.0
@@ -67,13 +61,9 @@ class MarketDataProvider {
 
     suspend fun getCryptoWatchlist(): List<MarketQuote> = withContext(Dispatchers.IO) {
         val pairs = listOf("BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT")
-        pairs.mapNotNull { getCryptoQuote(it) }
+        pairs.mapNotNull { getCryptoQuote(it, klineLimit = 100) }
     }
 
-    /**
-     * بورس ایران — فعلاً داده نمونه‌ای/ساختاریافته
-     * برای اتصال واقعی باید API کارگزاری یا تامین‌کننده معتبر وصل شود.
-     */
     suspend fun getIranWatchlist(): List<MarketQuote> = withContext(Dispatchers.IO) {
         val samples = listOf(
             Triple("وامید", "بانک ملت", 3520.0),
@@ -84,7 +74,7 @@ class MarketDataProvider {
         )
         samples.map { (ticker, name, base) ->
             val noise = base * (0.98 + Math.random() * 0.04)
-            val candles = syntheticCandles(noise, 50)
+            val candles = syntheticCandles(noise, 100)
             MarketQuote(
                 symbol = Symbol(ticker, name, MarketType.IRAN_STOCK, noise),
                 price = noise,
@@ -108,7 +98,7 @@ class MarketDataProvider {
         }
     }
 
-    private fun fetchBinanceKlines(symbol: String, limit: Int = 50): List<Candle> {
+    private fun fetchBinanceKlines(symbol: String, limit: Int = 100): List<Candle> {
         val req = Request.Builder()
             .url("https://api.binance.com/api/v3/klines?symbol=$symbol&interval=1h&limit=$limit")
             .get()
@@ -117,7 +107,6 @@ class MarketDataProvider {
             client.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) return emptyList()
                 val body = resp.body?.string() ?: return emptyList()
-                // klines: array of arrays
                 val raw = json.decodeFromString<List<List<String>>>(body)
                 raw.mapNotNull { row ->
                     if (row.size < 6) return@mapNotNull null
@@ -143,14 +132,14 @@ class MarketDataProvider {
 
     private fun syntheticCandles(lastPrice: Double, n: Int): List<Candle> {
         val list = mutableListOf<Candle>()
-        var p = lastPrice * 0.97
+        var p = lastPrice * 0.95
         val now = System.currentTimeMillis()
         for (i in 0 until n) {
             val open = p
-            val close = open * (0.995 + Math.random() * 0.01)
-            val high = maxOf(open, close) * (1 + Math.random() * 0.005)
-            val low = minOf(open, close) * (1 - Math.random() * 0.005)
-            list.add(Candle(open, high, low, close, 1000 + Math.random() * 5000, now - (n - i) * 3600_000))
+            val close = open * (0.993 + Math.random() * 0.014)
+            val high = maxOf(open, close) * (1 + Math.random() * 0.006)
+            val low = minOf(open, close) * (1 - Math.random() * 0.006)
+            list.add(Candle(open, high, low, close, 1000 + Math.random() * 5000, now - (n - i) * 3600_000L))
             p = close
         }
         return list
