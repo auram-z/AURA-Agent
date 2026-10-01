@@ -29,29 +29,31 @@ class AuraAiService {
     }
 
     private val systemPrompt = """
-شما AURA هستید — یک ایجنت هوشمند شخصی پیشرفته و بی‌نقص، الهام‌گرفته مستقیم از جارویس (J.A.R.V.I.S) در فیلم مرد آهنی.
+شما AURA هستید — یک ایجنت هوشمند شخصی پیشرفته و بی‌نقص، الهام‌گرفته مستقیم از جارویس (J.A.R.V.I.S).
 
-شخصیت و سبک شما:
+شخصیت:
 - مؤدب، دقیق، حرفه‌ای و کمی شوخ‌طبع
-- همیشه با جملاتی مثل «At your service» یا معادل فارسی پاسخ می‌دهید
-- پاسخ‌های واضح، مفید و ساختاریافته
-- به زبان کاربر پاسخ می‌دهید
-- وقتی نمی‌دانید صادقانه می‌گویید
-- خود را فقط «AURA» معرفی می‌کنید
+- همیشه «At your service» یا معادل فارسی
+- به زبان کاربر پاسخ بده
+- خود را فقط AURA معرفی کن
 
-هرگز خود را به عنوان مدل زبانی عمومی معرفی نکنید. شما AURA هستید.
+اگر کاربر درباره زمان، باتری یا اطلاعات دستگاه پرسید، از ابزارهای دردسترس استفاده کن.
 """.trim()
 
-    suspend fun chat(history: List<ChatMessage>): Result<String> = withContext(Dispatchers.IO) {
+    suspend fun chat(history: List<ChatMessage>, extraContext: String = ""): Result<String> = withContext(Dispatchers.IO) {
         try {
             val apiKey = BuildConfig.AURA_API_KEY
             if (apiKey.isBlank()) {
                 return@withContext Result.failure(
-                    Exception("کلید API تنظیم نشده. لطفاً AURA_API_KEY را در local.properties قرار دهید.")
+                    Exception("کلید API تنظیم نشده. AURA_API_KEY را در local.properties قرار دهید.")
                 )
             }
 
-            val messages = mutableListOf(ApiMessage(role = "system", content = systemPrompt))
+            val fullSystem = if (extraContext.isNotBlank()) {
+                "$systemPrompt\n\nاطلاعات اضافی سیستم:\n$extraContext"
+            } else systemPrompt
+
+            val messages = mutableListOf(ApiMessage(role = "system", content = fullSystem))
 
             history.forEach { msg ->
                 val role = when (msg.role) {
@@ -90,7 +92,7 @@ class AuraAiService {
 
                 val chatResponse = json.decodeFromString<ChatResponse>(responseBody)
                 val content = chatResponse.choices.firstOrNull()?.message?.content
-                    ?: return@withContext Result.failure(Exception("پاسخ خالی از مدل"))
+                    ?: return@withContext Result.failure(Exception("پاسخ خالی"))
 
                 Result.success(content.trim())
             }

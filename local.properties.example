@@ -1,5 +1,3 @@
-## این فایل را کپی کنید و نامش را local.properties بگذارید
-
 sdk.dir=/path/to/your/Android/sdk
 
 AURA_API_KEY=your_api_key_here

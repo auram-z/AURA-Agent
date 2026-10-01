@@ -12,8 +12,8 @@ android {
         applicationId = "com.aura.agent"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "2.0.0"
 
         val localProperties = com.android.build.gradle.internal.cxx.configure.gradleLocalProperties(rootDir)
         buildConfigField("String", "AURA_API_KEY", "\"${localProperties.getProperty("AURA_API_KEY", "")}\"")
@@ -57,6 +57,9 @@ dependencies {
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+
+    // DataStore for long-term memory
+    implementation("androidx.datastore:datastore-preferences:1.1.1")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

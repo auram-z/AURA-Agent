@@ -13,5 +13,6 @@ data class ChatMessage(
 data class AuraUiState(
     val messages: List<ChatMessage> = emptyList(),
     val isLoading: Boolean = false,
+    val isListening: Boolean = false,
     val error: String? = null
 )
