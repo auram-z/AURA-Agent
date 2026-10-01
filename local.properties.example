@@ -1,0 +1,7 @@
+## این فایل را کپی کنید و نامش را local.properties بگذارید
+
+sdk.dir=/path/to/your/Android/sdk
+
+AURA_API_KEY=your_api_key_here
+AURA_BASE_URL=https://api.x.ai/v1
+AURA_MODEL=grok-beta
