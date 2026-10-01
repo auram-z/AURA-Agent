@@ -24,39 +24,25 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
     val uiState: StateFlow<AuraUiState> = _uiState.asStateFlow()
 
     init {
-        voiceService.onResult = { text ->
-            sendMessage(text)
-        }
-        voiceService.onError = { error ->
-            _uiState.update { it.copy(isListening = false, error = error) }
-        }
-        voiceService.onListeningStateChanged = { listening ->
-            _uiState.update { it.copy(isListening = listening) }
-        }
+        voiceService.onResult = { text -> sendMessage(text) }
+        voiceService.onError = { error -> _uiState.update { it.copy(isListening = false, error = error) } }
+        voiceService.onListeningStateChanged = { listening -> _uiState.update { it.copy(isListening = listening) } }
     }
 
     fun sendMessage(text: String) {
         if (text.isBlank()) return
 
-        // بررسی ابزارهای ساده
         val toolResult = detectAndRunTool(text)
-
         val userMessage = ChatMessage(role = MessageRole.USER, content = text)
 
         _uiState.update { state ->
-            state.copy(
-                messages = state.messages + userMessage,
-                isLoading = true,
-                error = null
-            )
+            state.copy(messages = state.messages + userMessage, isLoading = true, error = null)
         }
 
         viewModelScope.launch {
             val extraContext = buildString {
                 append(tools.getAvailableToolsDescription())
-                if (toolResult != null) {
-                    append("\n\nنتیجه ابزار: $toolResult")
-                }
+                if (toolResult != null) append("\n\nنتیجه ابزار:\n$toolResult")
             }
 
             val history = _uiState.value.messages
@@ -64,31 +50,22 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
 
             result.fold(
                 onSuccess = { reply ->
-                    val finalReply = if (toolResult != null && !reply.contains(toolResult.take(20))) {
-                        "$toolResult\n\n$reply"
-                    } else reply
-
+                    val finalReply = when {
+                        toolResult != null && reply.length < 40 -> toolResult
+                        toolResult != null -> "$toolResult\n\n$reply"
+                        else -> reply
+                    }
                     val assistantMessage = ChatMessage(role = MessageRole.ASSISTANT, content = finalReply)
                     _uiState.update { state ->
-                        state.copy(
-                            messages = state.messages + assistantMessage,
-                            isLoading = false
-                        )
+                        state.copy(messages = state.messages + assistantMessage, isLoading = false)
                     }
-                    // پاسخ صوتی
-                    voiceService.speak(finalReply)
+                    voiceService.speak(finalReply.take(300))
                 },
                 onFailure = { error ->
-                    val errorMessage = ChatMessage(
-                        role = MessageRole.ASSISTANT,
-                        content = "متأسفانه خطایی رخ داد:\n${error.message ?: "خطای ناشناخته"}"
-                    )
+                    val msg = toolResult ?: "متأسفانه خطایی رخ داد:\n${error.message}"
+                    val errorMessage = ChatMessage(role = MessageRole.ASSISTANT, content = msg)
                     _uiState.update { state ->
-                        state.copy(
-                            messages = state.messages + errorMessage,
-                            isLoading = false,
-                            error = error.message
-                        )
+                        state.copy(messages = state.messages + errorMessage, isLoading = false, error = error.message)
                     }
                 }
             )
@@ -96,29 +73,42 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun detectAndRunTool(text: String): String? {
-        val lower = text.lowercase()
+        val lower = text.lowercase().trim()
         return when {
-            lower.contains("زمان") || lower.contains("ساعت") || lower.contains("time") ->
-                tools.executeTool("get_time")
-            lower.contains("باتری") || lower.contains("battery") ->
-                tools.executeTool("get_battery")
-            lower.contains("دستگاه") || lower.contains("مدل گوشی") || lower.contains("device") ->
-                tools.executeTool("get_device_info")
+            lower.contains("زمان") || lower.contains("ساعت") -> tools.executeTool("get_time")
+            lower.contains("باتری") -> tools.executeTool("get_battery")
+            lower.contains("دستگاه") || lower.contains("مدل گوشی") -> tools.executeTool("get_device_info")
+
+            // Trading
+            lower.contains("وضعیت معاملات") || lower.contains("پورتفو") || lower.contains("trading status") ||
+            lower.contains("وضعیت پورتفو") -> tools.executeTool("trading_status")
+
+            lower.contains("اسکن بورس") || lower.contains("بورس ایران") || lower.contains("scan iran") ->
+                tools.executeTool("scan_iran")
+
+            lower.contains("اسکن کریپتو") || lower.contains("کریپتو") || lower.contains("scan crypto") ->
+                tools.executeTool("scan_crypto")
+
+            lower.contains("معامله خودکار") && (lower.contains("روش
+") || lower.contains("فعال") || lower.contains("شروع")) ->
+                tools.executeTool("auto_on")
+
+            lower.contains("معامله خودکار") && (lower.contains("خاموش") || lower.contains("وقف")) ->
+                tools.executeTool("auto_off")
+
+            lower.contains("کیل سوییچ") || lower.contains("kill switch") || lower.contains("توقف اورژانسی") ->
+                tools.executeTool("kill_switch")
+
+            lower.contains("ادامه معاملات") || lower.contains("رد کیل") ->
+                tools.executeTool("release_kill")
+
             else -> null
         }
     }
 
-    fun startVoiceInput() {
-        voiceService.startListening()
-    }
-
-    fun stopVoiceInput() {
-        voiceService.stopListening()
-    }
-
-    fun clearConversation() {
-        _uiState.update { AuraUiState() }
-    }
+    fun startVoiceInput() = voiceService.startListening()
+    fun stopVoiceInput() = voiceService.stopListening()
+    fun clearConversation() = _uiState.update { AuraUiState() }
 
     override fun onCleared() {
         super.onCleared()
