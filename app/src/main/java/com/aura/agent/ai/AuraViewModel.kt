@@ -1,6 +1,9 @@
 package com.aura.agent.ai
 
 import android.app.Application
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.aura.agent.ai.tools.AuraTools
@@ -25,8 +28,16 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         voiceService.onResult = { text -> sendMessage(text) }
-        voiceService.onError = { error -> _uiState.update { it.copy(isListening = false, error = error) } }
-        voiceService.onListeningStateChanged = { listening -> _uiState.update { it.copy(isListening = listening) } }
+        voiceService.onError = { error ->
+            _uiState.update { it.copy(isListening = false, error = error) }
+        }
+        voiceService.onListeningStateChanged = { listening ->
+            _uiState.update { it.copy(isListening = listening) }
+        }
+        voiceService.onSpeakingStateChanged = { speaking ->
+            _uiState.update { it.copy(isSpeaking = speaking) }
+        }
+        refreshNetworkStatus()
     }
 
     fun sendMessage(text: String) {
@@ -40,8 +51,11 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         viewModelScope.launch {
+            refreshNetworkStatus()
+
             val extraContext = buildString {
                 append(tools.getAvailableToolsDescription())
+                append("\n\nوضعیت شبکه: ${if (_uiState.value.networkOnline) "متصل به اینترنت جهانی" else "آفلاین"}")
                 if (toolResult != null) append("\n\nنتیجه ابزار:\n$toolResult")
             }
 
@@ -59,7 +73,8 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                     _uiState.update { state ->
                         state.copy(messages = state.messages + assistantMessage, isLoading = false)
                     }
-                    voiceService.speak(finalReply.take(300))
+                    // پخش کامل بدون محدودیت طول
+                    voiceService.speak(finalReply)
                 },
                 onFailure = { error ->
                     val msg = toolResult ?: "متأسفانه خطایی رخ داد:\n${error.message}"
@@ -67,6 +82,7 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                     _uiState.update { state ->
                         state.copy(messages = state.messages + errorMessage, isLoading = false, error = error.message)
                     }
+                    voiceService.speak(msg.take(500))
                 }
             )
         }
@@ -79,6 +95,9 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
             lower.contains("باتری") -> tools.executeTool("get_battery")
             lower.contains("دستگاه") || lower.contains("مدل گوشی") -> tools.executeTool("get_device_info")
 
+            lower.contains("وضعیت شبکه") || lower.contains("اینترنت") || lower.contains("اتصال شبکه") ->
+                tools.networkStatus()
+
             lower.contains("وضعیت معاملات") || lower.contains("پورتفو") ||
             lower.contains("وضعیت پورتفو") -> tools.executeTool("trading_status")
 
@@ -87,8 +106,7 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
 
             lower.contains("اسکن کریپتو") -> tools.executeTool("scan_crypto")
 
-            lower.contains("معامله خودکار") && (lower.contains("روش
-") || lower.contains("فعال")) ->
+            lower.contains("معامله خودکار") && (lower.contains("روشن") || lower.contains("فعال")) ->
                 tools.executeTool("auto_on")
 
             lower.contains("معامله خودکار") && (lower.contains("خاموش") || lower.contains("وقف")) ->
@@ -96,6 +114,17 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
 
             lower.contains("کیل سوییچ") || lower.contains("kill switch") || lower.contains("توقف اورژانسی") ->
                 tools.executeTool("kill_switch")
+
+            // Continuous voice
+            lower.contains("شنیدن مداوم") || lower.contains("گفتار مداوم") ||
+            lower.contains("صدا بدون محدودیت") || lower.contains("continuous") -> {
+                enableContinuousListening()
+                "✅ شنیدن مداوم فعال شد. بدون محدودیت زمانی صحبت کنید. برای توقف بگویید «توقف شنیدن»."
+            }
+            lower.contains("توقف شنیدن") || lower.contains("خاموش کردن صدا") -> {
+                disableContinuousListening()
+                "🛑 شنیدن مداوم خاموش شد."
+            }
 
             // Backtest
             lower.contains("بک‌تست") && lower.contains("بورس") -> tools.backtestIran()
@@ -117,9 +146,57 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun startVoiceInput() = voiceService.startListening()
-    fun stopVoiceInput() = voiceService.stopListening()
-    fun clearConversation() = _uiState.update { AuraUiState() }
+    fun startVoiceInput() {
+        voiceService.setContinuousMode(false)
+        voiceService.startListening()
+        _uiState.update { it.copy(continuousListening = false) }
+    }
+
+    fun stopVoiceInput() {
+        voiceService.stopListening()
+        _uiState.update { it.copy(continuousListening = false, isListening = false) }
+    }
+
+    fun enableContinuousListening() {
+        voiceService.setContinuousMode(true)
+        voiceService.startListening()
+        _uiState.update { it.copy(continuousListening = true) }
+    }
+
+    fun disableContinuousListening() {
+        voiceService.setContinuousMode(false)
+        voiceService.stopListening()
+        _uiState.update { it.copy(continuousListening = false, isListening = false) }
+    }
+
+    fun toggleContinuousListening() {
+        if (_uiState.value.continuousListening) {
+            disableContinuousListening()
+        } else {
+            enableContinuousListening()
+        }
+    }
+
+    fun clearConversation() = _uiState.update {
+        AuraUiState(
+            continuousListening = it.continuousListening,
+            networkOnline = it.networkOnline
+        )
+    }
+
+    fun refreshNetworkStatus() {
+        val online = isNetworkAvailable()
+        _uiState.update { it.copy(networkOnline = online) }
+    }
+
+    private fun isNetworkAvailable(): Boolean {
+        val cm = getApplication<Application>()
+            .getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val network = cm.activeNetwork ?: return false
+        val caps = cm.getNetworkCapabilities(network) ?: return false
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    }
 
     override fun onCleared() {
         super.onCleared()
