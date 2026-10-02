@@ -3,6 +3,8 @@ package com.aura.agent.ai.tools
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.BatteryManager
 import android.os.Build
 import com.aura.agent.trading.BacktestEngine
@@ -41,6 +43,45 @@ class AuraTools(private val context: Context) {
         return "اطلاعات دستگاه:\n- مدل: ${Build.MODEL}\n- سازنده: ${Build.MANUFACTURER}\n- اندروید: ${Build.VERSION.RELEASE}"
     }
 
+    /** وضعیت اتصال به شبکه سراسری اینترنت جهانی */
+    fun networkStatus(): String {
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val network = cm.activeNetwork
+        if (network == null) {
+            return "🌐 وضعیت شبکه:\n• اتصال: ❌ آفلاین\n• اینترنت جهانی: در دسترس نیست"
+        }
+        val caps = cm.getNetworkCapabilities(network)
+        if (caps == null) {
+            return "🌐 وضعیت شبکه:\n• اتصال: ⚠️ نامشخص"
+        }
+
+        val hasInternet = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        val validated = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        val unmetered = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
+
+        val type = when {
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "Wi-Fi"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "داده موبایل (Cellular)"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "Ethernet"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) -> "VPN"
+            else -> "سایر"
+        }
+
+        val downKbps = caps.linkDownstreamBandwidthKbps
+        val upKbps = caps.linkUpstreamBandwidthKbps
+
+        return buildString {
+            append("🌐 وضعیت شبکه سراسری:\n")
+            append("• نوع: $type\n")
+            append("• اینترنت: ${if (hasInternet) "✅ فعال" else "❌ غیرفعال"}\n")
+            append("• اعتبارسنجی جهانی: ${if (validated) "✅ متصل به اینترنت جهانی" else "⚠️ در حال بررسی / محدود"}\n")
+            append("• بدون محدودیت حجمی: ${if (unmetered) "بله" else "خیر (ممکن است حجمی باشد)"}\n")
+            if (downKbps > 0) append("• پهنای باند تقریبی ↓: ${downKbps} kbps\n")
+            if (upKbps > 0) append("• پهنای باند تقریبی ↑: ${upKbps} kbps\n")
+            append("• دسترسی APIهای جهانی (Binance / xAI): ${if (validated) "آماده" else "نیاز به اتصال پایدار"}")
+        }
+    }
+
     fun tradingStatus(): String = tradingEngine.getStatus()
     fun scanIranStock(): String = tradingEngine.runScan(MarketType.IRAN_STOCK)
     fun scanCrypto(): String = tradingEngine.runScan(MarketType.CRYPTO)
@@ -59,7 +100,6 @@ class AuraTools(private val context: Context) {
         return tradingEngine.manualOrder(ticker, OrderSide.SELL, m)
     }
 
-    // ─── Backtest ───
     fun backtestCrypto(): String = backtestEngine.runCryptoBasket()
 
     fun backtestCryptoSymbol(ticker: String): String {
@@ -73,16 +113,19 @@ class AuraTools(private val context: Context) {
         return """
 ابزارهای AURA:
 1. زمان / باتری / دستگاه
-2. وضعیت پورتفو
-3. اسکن بورس / اسکن کریپتو
-4. معامله خودکار روش
-/خاموش
-5. کیل سوییچ
-6. بک‌تست کریپتو — بک‌تست SMA+RSI روی کندل‌های واقعی
-7. بک‌تست بورس — بک‌تست روی داده نمونه بورس
-8. بک‌تست BTC / ETH / ... — بک‌تست یک نماد
+2. وضعیت شبکه / اینترنت (اتصال جهانی)
+3. وضعیت پورتفو
+4. اسکن بورس / اسکن کریپتو
+5. معامله خودکار روشن/خاموش
+6. کیل سوییچ
+7. بک‌تست کریپتو — بک‌تست SMA+RSI روی کندل‌های واقعی
+8. بک‌تست بورس — بک‌تست روی داده نمونه بورس
+9. بک‌تست BTC / ETH / ... — بک‌تست یک نماد
+10. شنیدن مداوم / توقف شنیدن — گفتار بدون محدودیت
 
 ⚠️ همه معاملات زنده فقط Paper هستند.
+گفتار: بدون محدودیت طول پاسخ — شنیدن مداوم پشتیبانی می‌شود.
+شبکه: دسترسی به اینترنت جهانی (HTTPS).
         """.trim()
     }
 
@@ -91,6 +134,7 @@ class AuraTools(private val context: Context) {
             "get_time", "time", "زمان" -> getCurrentTime()
             "get_battery", "battery", "باتری" -> getBatteryInfo()
             "get_device_info", "device", "دستگاه" -> getDeviceInfo()
+            "network", "network_status", "وضعیت شبکه", "اینترنت" -> networkStatus()
             "trading_status", "status", "وضعیت", "پورتفو" -> tradingStatus()
             "scan_iran", "اسکن بورس", "بورس" -> scanIranStock()
             "scan_crypto", "اسکن کریپتو", "کریپتو" -> scanCrypto()
@@ -100,7 +144,7 @@ class AuraTools(private val context: Context) {
             "release_kill", "ادامه" -> releaseKillSwitch()
             "backtest_crypto", "بک‌تست کریپتو" -> backtestCrypto()
             "backtest_iran", "بک‌تست بورس" -> backtestIran()
-            else -> "ابزار «$toolName» شناخته است."
+            else -> "ابزار «$toolName» شناخته نشد."
         }
     }
 }
