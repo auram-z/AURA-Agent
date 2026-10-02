@@ -3,6 +3,7 @@ package com.aura.agent.trading.data
 import com.aura.agent.trading.models.MarketType
 import com.aura.agent.trading.models.Symbol
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -29,9 +30,13 @@ data class MarketQuote(
 
 class MarketDataProvider {
 
+    // اتصال پایدار به شبکه جهانی — تایم‌اوت بلند + retry
     private val client = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(25, TimeUnit.SECONDS)
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(45, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .callTimeout(60, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
         .build()
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -39,8 +44,8 @@ class MarketDataProvider {
     suspend fun getCryptoQuote(ticker: String, klineLimit: Int = 100): MarketQuote? = withContext(Dispatchers.IO) {
         try {
             val pair = normalizeCryptoSymbol(ticker)
-            val price = fetchBinancePrice(pair) ?: return@withContext null
-            val candles = fetchBinanceKlines(pair, limit = klineLimit)
+            val price = fetchWithRetry { fetchBinancePrice(pair) } ?: return@withContext null
+            val candles = fetchWithRetry { fetchBinanceKlines(pair, limit = klineLimit) } ?: emptyList()
             val change = if (candles.size >= 2) {
                 val old = candles.first().close
                 if (old > 0) ((price - old) / old) * 100 else 0.0
@@ -85,10 +90,23 @@ class MarketDataProvider {
         }
     }
 
+    private suspend fun <T> fetchWithRetry(times: Int = 3, blockMs: Long = 800, block: () -> T?): T? {
+        var last: T? = null
+        repeat(times) { attempt ->
+            try {
+                last = block()
+                if (last != null) return last
+            } catch (_: Exception) {}
+            if (attempt < times - 1) delay(delayMs * (attempt + 1))
+        }
+        return last
+    }
+
     private fun fetchBinancePrice(symbol: String): Double? {
         val req = Request.Builder()
             .url("https://api.binance.com/api/v3/ticker/price?symbol=$symbol")
             .get()
+            .header("User-Agent", "AURA-Agent/2.2 (Global)")
             .build()
         client.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) return null
@@ -102,6 +120,7 @@ class MarketDataProvider {
         val req = Request.Builder()
             .url("https://api.binance.com/api/v3/klines?symbol=$symbol&interval=1h&limit=$limit")
             .get()
+            .header("User-Agent", "AURA-Agent/2.2 (Global)")
             .build()
         return try {
             client.newCall(req).execute().use { resp ->
