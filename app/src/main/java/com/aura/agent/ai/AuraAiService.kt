@@ -22,10 +22,13 @@ class AuraAiService(
     private val modelOverride: String? = null
 ) {
 
+    // تایم‌اوت‌های طولانی برای اتصال پایدار به شبکه جهانی
     private val client = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
-        .writeTimeout(30, TimeUnit.SECONDS)
+        .connectTimeout(45, TimeUnit.SECONDS)
+        .readTimeout(120, TimeUnit.SECONDS)
+        .writeTimeout(45, TimeUnit.SECONDS)
+        .callTimeout(150, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
         .build()
 
     private val json = Json {
@@ -37,6 +40,7 @@ class AuraAiService(
 شما AURA هستید — ایجنت هوشمند شخصی الهام‌گرفته از جارویس (J.A.R.V.I.S).
 مؤدب، دقیق، حرفه‌ای و کمی شوخ‌طبع. همیشه «At your service».
 به زبان کاربر پاسخ بده. خود را فقط AURA معرفی کن.
+پاسخ‌ها می‌توانند کامل و بدون محدودیت طول باشند؛ سیستم گفتار تمام متن را پخش می‌کند.
 """.trim()
 
     suspend fun chat(history: List<ChatMessage>, extraContext: String = ""): Result<String> =
@@ -60,8 +64,11 @@ class AuraAiService(
                     "$systemPrompt\n\nاطلاعات اضافی سیستم:\n$extraContext"
                 } else systemPrompt
 
+                // بدون سقف سخت روی تاریخچه — آخرین پیام‌ها نگه داشته می‌شوند
+                val trimmedHistory = if (history.size > 60) history.takeLast(60) else history
+
                 val messages = mutableListOf(ApiMessage(role = "system", content = fullSystem))
-                history.forEach { msg ->
+                trimmedHistory.forEach { msg ->
                     val role = when (msg.role) {
                         MessageRole.USER -> "user"
                         MessageRole.ASSISTANT -> "assistant"
@@ -74,7 +81,7 @@ class AuraAiService(
                     model = model,
                     messages = messages,
                     temperature = 0.7,
-                    maxTokens = 2048
+                    maxTokens = 4096  // پاسخ‌های بلندتر بدون محدودیت گفتاری
                 )
 
                 val body = json.encodeToString(requestBody)
@@ -91,7 +98,7 @@ class AuraAiService(
                     val responseBody = response.body?.string() ?: ""
                     if (!response.isSuccessful) {
                         return@withContext Result.failure(
-                            Exception("خطای API (${response.code})")
+                            Exception("خطای API (${response.code}) — اتصال به شبکه جهانی را بررسی کنید")
                         )
                     }
                     val chatResponse = json.decodeFromString<ChatResponse>(responseBody)
@@ -112,7 +119,7 @@ class AuraAiService(
         val model: String,
         val messages: List<ApiMessage>,
         val temperature: Double = 0.7,
-        @SerialName("max_tokens") val maxTokens: Int = 2048
+        @SerialName("max_tokens") val maxTokens: Int = 4096
     )
 
     @Serializable
