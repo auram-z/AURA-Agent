@@ -14,5 +14,8 @@ data class AuraUiState(
     val messages: List<ChatMessage> = emptyList(),
     val isLoading: Boolean = false,
     val isListening: Boolean = false,
+    val isSpeaking: Boolean = false,
+    val continuousListening: Boolean = false,
+    val networkOnline: Boolean = true,
     val error: String? = null
 )
