@@ -32,6 +32,7 @@ import kotlinx.coroutines.launch
 class AuraViewModel(application: Application) : AndroidViewModel(application) {
 
     private val aiService = AuraAiService()
+    private val agent = AgentOrchestrator(aiService)
     private val tools = AuraTools(application)
     private val voiceService = VoiceService(application)
     private val mediaTranslate = MediaTranslateManager(application)
@@ -89,7 +90,6 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
     fun sendMessage(text: String) {
         if (text.isBlank()) return
 
-        // مسیر ترجمه/زیرنویس (async)
         val mediaJob = detectMediaTranslate(text)
         if (mediaJob != null) {
             val userMessage = ChatMessage(role = MessageRole.USER, content = text)
@@ -107,6 +107,10 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
+        val forceSearch = text.lowercase().let {
+            it.startsWith("جستجو") || it.startsWith("سرچ") || it.startsWith("search") ||
+                it.contains("جستجو کن")
+        }
         val toolResult = detectAndRunTool(text)
         val userMessage = ChatMessage(role = MessageRole.USER, content = text)
 
@@ -117,48 +121,37 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             refreshNetworkStatus()
             val learned = learningManager.buildLearnedContext()
-            val extraContext = buildString {
+            val baseContext = buildString {
                 append(tools.getAvailableToolsDescription())
                 append("\n\n")
                 append(mediaTranslate.helpText())
-                append("\n\nوضعیت شبکه: ${if (_uiState.value.networkOnline) "متصل" else "آفلاین"}")
-                if (learned.isNotBlank()) {
-                    append("\n\n=== حافظه ===\n$learned")
-                }
+                append("\n\nقابلیت: جستجوی وب خودکار برای اخبار، قیمت، حقایق به‌روز.")
+                append("\nوضعیت شبکه: ${if (_uiState.value.networkOnline) "متصل" else "آفلاین"}")
+                append("\nیادگیری خودکار: ${if (_uiState.value.autoLearnEnabled) "فعال" else "خاموش"}")
+                if (learned.isNotBlank()) append("\n\n=== حافظه ===\n$learned")
                 if (toolResult != null) append("\n\nنتیجه ابزار:\n$toolResult")
             }
 
-            val result = aiService.chat(_uiState.value.messages, extraContext)
-            result.fold(
-                onSuccess = { reply ->
-                    val finalReply = when {
-                        toolResult != null && reply.length < 40 -> toolResult
-                        toolResult != null -> "$toolResult\n\n$reply"
-                        else -> reply
-                    }
-                    val assistantMessage = ChatMessage(role = MessageRole.ASSISTANT, content = finalReply)
-                    _uiState.update {
-                        it.copy(messages = it.messages + assistantMessage, isLoading = false)
-                    }
-                    voiceService.speak(finalReply)
-                    learningManager.analyzeAndPropose(userMessage, assistantMessage, _uiState.value.networkOnline)
-                },
-                onFailure = { error ->
-                    val msg = toolResult ?: "خطا: ${error.message}"
-                    _uiState.update {
-                        it.copy(
-                            messages = it.messages + ChatMessage(role = MessageRole.ASSISTANT, content = msg),
-                            isLoading = false,
-                            error = error.message
-                        )
-                    }
-                    voiceService.speak(msg.take(500))
-                }
+            val agentResult = agent.run(
+                history = _uiState.value.messages,
+                userText = text,
+                baseContext = baseContext,
+                forceSearch = forceSearch && _uiState.value.networkOnline
             )
+
+            var finalReply = agentResult.reply
+            if (toolResult != null && finalReply.length < 40) finalReply = toolResult
+            else if (toolResult != null) finalReply = "$toolResult\n\n$finalReply"
+
+            val assistantMessage = ChatMessage(role = MessageRole.ASSISTANT, content = finalReply)
+            _uiState.update {
+                it.copy(messages = it.messages + assistantMessage, isLoading = false)
+            }
+            voiceService.speak(finalReply)
+            learningManager.analyzeAndPropose(userMessage, assistantMessage, _uiState.value.networkOnline)
         }
     }
 
-    /** ترجمه عکس از گالری */
     fun translateImageUri(uri: Uri) {
         val userMessage = ChatMessage(role = MessageRole.USER, content = "📷 ترجمه تصویر به فارسی")
         _uiState.update {
@@ -198,7 +191,6 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         when {
             isSubCmd && (lower.contains("کمک") || lower.contains("راهنما") || text.length < 15) ->
                 return { mediaTranslate.helpText() }
-
             isSubCmd -> {
                 val payload = text
                     .replace(Regex("(?i)زیرنویس\\s*(فارسی)?[:：]?"), "")
@@ -207,7 +199,6 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                 if (payload.length < 3) return { mediaTranslate.helpText() }
                 return { mediaTranslate.translateSubtitles(payload) }
             }
-
             isTranslateCmd -> {
                 val payload = text
                     .replace(Regex("(?i)ترجمه\\s*(کن)?\\s*(به\\s*فارسی)?[:：]?"), "")
@@ -219,11 +210,8 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 return { "🇮🇷 ${mediaTranslate.translateText(payload)}" }
             }
-
-            lower == "ترجمه عکس" || lower == "عکس ترجمه" || lower.contains("ترجمه تصویر") ->
-                return {
-                    "برای ترجمه عکس، از دکمه 📷 استفاده کنید یا تصویر را از گالری انتخاب کنید."
-                }
+            lower == "ترجمه عکس" || lower.contains("ترجمه تصویر") ->
+                return { "از دکمه 📷 برای انتخاب تصویر استفاده کنید." }
         }
         return null
     }
@@ -285,10 +273,10 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
             }
             lower.contains("بک‌تست") && lower.contains("بورس") -> tools.backtestIran()
             lower.contains("بک‌تست") || lower.contains("backtest") -> tools.backtestCrypto()
-            (lower.contains("یادگیری خودکار")) && (lower.contains("روشن") || lower.contains("فعال")) -> {
+            lower.contains("یادگیری خودکار") && (lower.contains("روشن") || lower.contains("فعال")) -> {
                 setAutoLearn(true); "✅ یادگیری خودکار فعال شد."
             }
-            (lower.contains("یادگیری خودکار")) && (lower.contains("خاموش")) -> {
+            lower.contains("یادگیری خودکار") && lower.contains("خاموش") -> {
                 setAutoLearn(false); "🛑 یادگیری خودکار خاموش شد."
             }
             lower.contains("وضعیت یادگیری") ->
