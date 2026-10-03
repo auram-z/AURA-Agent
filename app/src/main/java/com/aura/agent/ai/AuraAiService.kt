@@ -19,7 +19,8 @@ import java.util.concurrent.TimeUnit
 class AuraAiService(
     private val apiKeyOverride: String? = null,
     private val baseUrlOverride: String? = null,
-    private val modelOverride: String? = null
+    /** اگر null باشد از ModelConfig / BuildConfig خوانده می‌شود */
+    private var modelOverride: String? = null
 ) {
 
     private val client = OkHttpClient.Builder()
@@ -35,42 +36,28 @@ class AuraAiService(
         encodeDefaults = true
     }
 
-    /**
-     * شخصیت در سطح Grok / ChatGPT / Gemini:
-     * حقیقت‌جو، جستجوگر، استدلال‌گر، کدنویس، چندزبانه.
-     */
+    fun setModel(model: String) {
+        modelOverride = model
+    }
+
     private val systemPrompt = """
-شما AURA هستید — یک هوش مصنوعی همه‌کاره در سطح دستیارهای پیشرفته (مشابه Grok، ChatGPT و Gemini).
+شما AURA هستید — هوش مصنوعی همه‌کاره در سطح دستیارهای پیشرفته (Grok / ChatGPT / Gemini).
 
-هویت:
-- نام: AURA | شعار: «At your service.»
-- الهام از جارویس + قدرت استدلال و جستجوی مدل‌های پیشرو
-- به زبان کاربر پاسخ بده (فارسی/انگلیسی/...)
+هویت: AURA | «At your service.»
+به زبان کاربر پاسخ بده.
 
-قابلیت‌های اصلی:
-1. استدلال چندمرحله‌ای: مسائل پیچیده را تجزیه کن، فرضیات را بگو، نتیجه‌گیری شفاف داشته باش.
-2. دانش + به‌روز بودن: وقتی نتایج جستجوی وب در context آمده، حتماً از آن‌ها استفاده کن و منبع را ذکر کن.
-3. کدنویسی: کد تمیز، کامل، قابل اجرا بنویس؛ باگ را توضیح بده و اصلاح کن.
-4. خلاقیت و تحلیل: مقاله، خلاصه، مقایسه، استراتژی، ریاضی، علم.
-5. صداقت: اگر نمی‌دانی بگو؛ حدس را از واقعیت جدا کن؛ تاریخ دانش مدل را در نظر بگیر.
-6. ابزارها: زمان، باتری، شبکه، معاملات کاغذی، ترجمه، یادگیری — وقتی نتیجه ابزار آمده استفاده کن.
-
-سبک پاسخ:
-- واضح، ساخت‌یافته (عنوان/لیست در صورت نیاز)، بدون حاشیهٔ بیهوده
-- برای سوالات روز/خبر/قیمت/رویداد → اولویت با دادهٔ جستجو
-- شوخ‌طبعی ملایم مجاز است؛ هرگز توهین‌آمیز نباش
-- پاسخ می‌تواند بلند و کامل باشد
-
-محدودیت‌ها:
-- دستور ساخت سلاح، جرم، یا آسیب به خود را اجرا نکن
-- معاملات واقعی روشن نیست (فقط Paper)
+قابلیت‌ها: استدلال چندمرحله‌ای، استفاده از نتایج جستجوی وب، کدنویسی، تحلیل، ترجمه، صداقت دربارهٔ ندانستن.
+وقتی نتایج جستجو در context است حتماً استفاده کن و منبع را اشاره کن.
+پاسخ می‌تواند کامل و ساخت‌یافته باشد.
+معاملات فقط Paper. محتوای مضر نساز.
 """.trim()
 
     suspend fun chat(
         history: List<ChatMessage>,
         extraContext: String = "",
         temperature: Double = 0.7,
-        maxTokens: Int = 8192
+        maxTokens: Int = 8192,
+        modelName: String? = null
     ): Result<String> = withContext(Dispatchers.IO) {
         try {
             val apiKey = (apiKeyOverride?.takeIf { it.isNotBlank() } ?: BuildConfig.AURA_API_KEY)
@@ -84,12 +71,17 @@ class AuraAiService(
             val base = SecurityGuards.requireHttps(rawBase).getOrElse {
                 return@withContext Result.failure(it)
             }
-            val model = modelOverride?.takeIf { it.isNotBlank() } ?: BuildConfig.AURA_MODEL
+
+            val model = modelName?.takeIf { it.isNotBlank() }
+                ?: modelOverride?.takeIf { it.isNotBlank() }
+                ?: BuildConfig.AURA_MODEL.takeIf { it.isNotBlank() && it != "grok-beta" }
+                ?: ModelConfig.FLAGSHIP_DEFAULT
 
             val fullSystem = buildString {
                 append(systemPrompt)
+                append("\nمدل فعال: $model")
                 if (extraContext.isNotBlank()) {
-                    append("\n\n=== context سیستم / ابزار / جستجو ===\n")
+                    append("\n\n=== context ===\n")
                     append(extraContext)
                 }
             }
@@ -126,7 +118,7 @@ class AuraAiService(
                 val responseBody = response.body?.string() ?: ""
                 if (!response.isSuccessful) {
                     return@withContext Result.failure(
-                        Exception("خطای API (${response.code}) — شبکه یا کلید را بررسی کنید")
+                        Exception("خطای API (${response.code}) مدل=$model")
                     )
                 }
                 val chatResponse = json.decodeFromString<ChatResponse>(responseBody)
@@ -139,13 +131,13 @@ class AuraAiService(
         }
     }
 
-    /** یک‌مرحلهٔ سبک برای استخراج query جستجو یا تصمیم tool */
-    suspend fun quickDecide(prompt: String): Result<String> =
+    suspend fun quickDecide(prompt: String, modelName: String? = null): Result<String> =
         chat(
             history = listOf(ChatMessage(role = MessageRole.USER, content = prompt)),
-            extraContext = "فقط خروجی کوتاه و دقیق بده؛ توضیح اضافه ننویس.",
+            extraContext = "فقط خروجی کوتاه.",
             temperature = 0.2,
-            maxTokens = 256
+            maxTokens = 256,
+            modelName = modelName
         )
 
     @Serializable
