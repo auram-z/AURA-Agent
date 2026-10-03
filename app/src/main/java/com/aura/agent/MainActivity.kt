@@ -1,9 +1,12 @@
 package com.aura.agent
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -18,6 +21,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Person
@@ -53,8 +57,12 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestPermission()
     ) { }
 
+    private var pendingShareUri: Uri? = null
+    private var pendingShareText: String? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        handleShareIntent(intent)
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED
         ) {
@@ -64,7 +72,27 @@ class MainActivity : ComponentActivity() {
         setContent {
             AuraTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = Color.Transparent) {
-                    AuraChatScreen()
+                    AuraChatScreen(
+                        initialImageUri = pendingShareUri,
+                        initialText = pendingShareText
+                    )
+                }
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleShareIntent(intent)
+    }
+
+    private fun handleShareIntent(intent: Intent?) {
+        when (intent?.action) {
+            Intent.ACTION_SEND -> {
+                if (intent.type?.startsWith("image/") == true) {
+                    pendingShareUri = intent.getParcelableExtra(Intent.EXTRA_STREAM)
+                } else if (intent.type?.startsWith("text/") == true) {
+                    pendingShareText = intent.getStringExtra(Intent.EXTRA_TEXT)
                 }
             }
         }
@@ -73,12 +101,31 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AuraChatScreen(viewModel: AuraViewModel = viewModel()) {
+fun AuraChatScreen(
+    viewModel: AuraViewModel = viewModel(),
+    initialImageUri: Uri? = null,
+    initialText: String? = null
+) {
     val uiState by viewModel.uiState.collectAsState()
     val listState = rememberLazyListState()
     val keyboardController = LocalSoftwareKeyboardController.current
     var inputText by remember { mutableStateOf("") }
     var editText by remember { mutableStateOf("") }
+
+    val imagePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let { viewModel.translateImageUri(it) }
+    }
+
+    LaunchedEffect(initialImageUri) {
+        initialImageUri?.let { viewModel.translateImageUri(it) }
+    }
+    LaunchedEffect(initialText) {
+        initialText?.takeIf { it.isNotBlank() }?.let {
+            viewModel.sendMessage("ترجمه کن: $it")
+        }
+    }
 
     LaunchedEffect(uiState.messages.size) {
         if (uiState.messages.isNotEmpty()) listState.animateScrollToItem(uiState.messages.size - 1)
@@ -97,7 +144,7 @@ fun AuraChatScreen(viewModel: AuraViewModel = viewModel()) {
                 title = {
                     Column {
                         Text("AURA", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color(0xFF38BDF8))
-                        Text("At your service · v2.4", fontSize = 12.sp, color = Color(0xFF94A3B8))
+                        Text("ترجمه · زیرنویس · v2.5", fontSize = 12.sp, color = Color(0xFF94A3B8))
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF0F172A).copy(alpha = 0.9f))
@@ -120,15 +167,6 @@ fun AuraChatScreen(viewModel: AuraViewModel = viewModel()) {
                 if (uiState.isLoading) item { TypingIndicator() }
             }
 
-            uiState.lastTrainingReport?.let { report ->
-                Text(
-                    report,
-                    color = Color(0xFF22C55E),
-                    fontSize = 12.sp,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-                )
-            }
-
             Row(
                 modifier = Modifier.fillMaxWidth().background(Color(0xFF0F172A)).padding(12.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -139,21 +177,38 @@ fun AuraChatScreen(viewModel: AuraViewModel = viewModel()) {
                     },
                     containerColor = if (uiState.isListening) Color(0xFFEF4444) else Color(0xFF334155),
                     contentColor = Color.White,
-                    modifier = Modifier.size(52.dp),
+                    modifier = Modifier.size(48.dp),
                     shape = CircleShape
                 ) {
                     Icon(
                         if (uiState.isListening) Icons.Default.MicOff else Icons.Default.Mic,
-                        contentDescription = "صدا"
+                        contentDescription = "صدا",
+                        modifier = Modifier.size(22.dp)
                     )
                 }
-                Spacer(Modifier.width(8.dp))
+                Spacer(Modifier.width(6.dp))
+                // دکمه ترجمه عکس
+                FloatingActionButton(
+                    onClick = { imagePicker.launch("image/*") },
+                    containerColor = Color(0xFF334155),
+                    contentColor = Color(0xFF38BDF8),
+                    modifier = Modifier.size(48.dp),
+                    shape = CircleShape
+                ) {
+                    Icon(Icons.Default.Image, contentDescription = "ترجمه عکس", modifier = Modifier.size(22.dp))
+                }
+                Spacer(Modifier.width(6.dp))
                 OutlinedTextField(
                     value = inputText,
                     onValueChange = { inputText = it },
                     modifier = Modifier.weight(1f),
                     placeholder = {
-                        Text(if (uiState.isListening) "در حال شنیدن..." else "با AURA صحبت کنید...", color = Color(0xFF64748B))
+                        Text(
+                            if (uiState.isListening) "در حال شنیدن..."
+                            else "ترجمه / زیرنویس / چت...",
+                            color = Color(0xFF64748B),
+                            fontSize = 13.sp
+                        )
                     },
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedTextColor = Color.White, unfocusedTextColor = Color.White,
@@ -170,16 +225,16 @@ fun AuraChatScreen(viewModel: AuraViewModel = viewModel()) {
                         }
                     })
                 )
-                Spacer(Modifier.width(8.dp))
+                Spacer(Modifier.width(6.dp))
                 FloatingActionButton(
                     onClick = {
                         if (inputText.isNotBlank() && !uiState.isLoading) {
                             viewModel.sendMessage(inputText.trim()); inputText = ""; keyboardController?.hide()
                         }
                     },
-                    containerColor = Color(0xFF0EA5E9), contentColor = Color.White, modifier = Modifier.size(52.dp)
+                    containerColor = Color(0xFF0EA5E9), contentColor = Color.White, modifier = Modifier.size(48.dp)
                 ) {
-                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "ارسال")
+                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "ارسال", modifier = Modifier.size(22.dp))
                 }
             }
         }
@@ -206,13 +261,7 @@ fun AuraChatScreen(viewModel: AuraViewModel = viewModel()) {
                             value = editText,
                             onValueChange = { editText = it },
                             modifier = Modifier.fillMaxWidth(),
-                            label = { Text("محتوا (قابل ویرایش)") },
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = Color.White, unfocusedTextColor = Color.White,
-                                focusedBorderColor = Color(0xFF38BDF8), unfocusedBorderColor = Color(0xFF334155),
-                                cursorColor = Color(0xFF38BDF8),
-                                focusedLabelColor = Color(0xFF94A3B8), unfocusedLabelColor = Color(0xFF64748B)
-                            ),
+                            label = { Text("محتوا") },
                             maxLines = 5
                         )
                     }
@@ -230,9 +279,7 @@ fun AuraChatScreen(viewModel: AuraViewModel = viewModel()) {
                         }) { Text("❌ رد", color = Color(0xFFEF4444)) }
                     }
                 },
-                containerColor = Color(0xFF1E293B),
-                titleContentColor = Color.White,
-                textContentColor = Color.White
+                containerColor = Color(0xFF1E293B)
             )
         }
     }
@@ -246,7 +293,7 @@ fun WelcomeMessage() {
         Text("سلام، من AURA هستم", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color(0xFF38BDF8), textAlign = TextAlign.Center)
         Spacer(Modifier.height(8.dp))
         Text(
-            "دستیار هوشمند شخصی شما\n👍👎 روی پاسخ‌ها · حافظه با تأیید شما\nAt your service.",
+            "ترجمه و زیرنویس خودکار به فارسی\n📷 عکس · متن · SRT\nAt your service.",
             fontSize = 15.sp, color = Color(0xFF94A3B8), textAlign = TextAlign.Center, lineHeight = 22.sp
         )
     }
@@ -288,36 +335,21 @@ fun MessageBubble(
                     modifier = Modifier.padding(start = 8.dp, top = 4.dp).size(28.dp))
             }
         }
-
-        // فاز ۴: Feedback UI فقط روی پیام‌های دستیار
         if (!isUser) {
-            Row(
-                modifier = Modifier.padding(start = 36.dp, top = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                IconButton(
-                    onClick = onThumbsUp,
-                    modifier = Modifier.size(32.dp)
-                ) {
+            Row(Modifier.padding(start = 36.dp, top = 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                IconButton(onClick = onThumbsUp, modifier = Modifier.size(32.dp)) {
                     Icon(
-                        imageVector = if (message.feedback == MessageFeedback.THUMBS_UP)
-                            Icons.Filled.ThumbUp else Icons.Outlined.ThumbUp,
-                        contentDescription = "خوب",
-                        tint = if (message.feedback == MessageFeedback.THUMBS_UP)
-                            Color(0xFF22C55E) else Color(0xFF64748B),
+                        if (message.feedback == MessageFeedback.THUMBS_UP) Icons.Filled.ThumbUp else Icons.Outlined.ThumbUp,
+                        "خوب",
+                        tint = if (message.feedback == MessageFeedback.THUMBS_UP) Color(0xFF22C55E) else Color(0xFF64748B),
                         modifier = Modifier.size(18.dp)
                     )
                 }
-                IconButton(
-                    onClick = onThumbsDown,
-                    modifier = Modifier.size(32.dp)
-                ) {
+                IconButton(onClick = onThumbsDown, modifier = Modifier.size(32.dp)) {
                     Icon(
-                        imageVector = if (message.feedback == MessageFeedback.THUMBS_DOWN)
-                            Icons.Filled.ThumbDown else Icons.Outlined.ThumbDown,
-                        contentDescription = "بد",
-                        tint = if (message.feedback == MessageFeedback.THUMBS_DOWN)
-                            Color(0xFFEF4444) else Color(0xFF64748B),
+                        if (message.feedback == MessageFeedback.THUMBS_DOWN) Icons.Filled.ThumbDown else Icons.Outlined.ThumbDown,
+                        "بد",
+                        tint = if (message.feedback == MessageFeedback.THUMBS_DOWN) Color(0xFFEF4444) else Color(0xFF64748B),
                         modifier = Modifier.size(18.dp)
                     )
                 }
@@ -332,7 +364,7 @@ fun TypingIndicator() {
         Icon(Icons.Default.SmartToy, null, tint = Color(0xFF38BDF8), modifier = Modifier.size(28.dp))
         Spacer(Modifier.width(8.dp))
         Surface(shape = RoundedCornerShape(16.dp), color = Color(0xFF1E293B)) {
-            Text("AURA در حال فکر کردن...", color = Color(0xFF94A3B8),
+            Text("AURA در حال کار...", color = Color(0xFF94A3B8),
                 fontSize = 14.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
         }
     }
