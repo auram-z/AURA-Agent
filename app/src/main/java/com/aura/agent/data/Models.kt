@@ -1,5 +1,7 @@
 package com.aura.agent.data
 
+import com.aura.agent.learning.ConfirmationGate
+
 enum class MessageRole {
     USER, ASSISTANT, SYSTEM
 }
@@ -17,5 +19,6 @@ data class AuraUiState(
     val isSpeaking: Boolean = false,
     val continuousListening: Boolean = false,
     val networkOnline: Boolean = true,
-    val error: String? = null
+    val error: String? = null,
+    val pendingConfirmation: ConfirmationGate.PendingItem? = null
 )

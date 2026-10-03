@@ -12,8 +12,8 @@ import kotlinx.coroutines.flow.map
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "aura_memory")
 
 /**
- * حافظه بلندمدت ساده AURA
- * در نسخه‌های بعدی می‌توان به Room + Embeddings ارتقا یابد
+ * حافظه بلندمدت AURA
+ * تمام ذخیره‌های مهم باید از ConfirmationGate عبور کنند.
  */
 class MemoryStore(private val context: Context) {
 
@@ -21,10 +21,13 @@ class MemoryStore(private val context: Context) {
         private val KEY_USER_NAME = stringPreferencesKey("user_name")
         private val KEY_NOTES = stringPreferencesKey("user_notes")
         private val KEY_PREFERENCES = stringPreferencesKey("user_preferences")
+        private val KEY_GOALS = stringPreferencesKey("user_goals")
     }
 
     val userName: Flow<String?> = context.dataStore.data.map { it[KEY_USER_NAME] }
     val notes: Flow<String?> = context.dataStore.data.map { it[KEY_NOTES] }
+    val preferences: Flow<String?> = context.dataStore.data.map { it[KEY_PREFERENCES] }
+    val goals: Flow<String?> = context.dataStore.data.map { it[KEY_GOALS] }
 
     suspend fun saveUserName(name: String) {
         context.dataStore.edit { it[KEY_USER_NAME] = name }
@@ -37,5 +40,13 @@ class MemoryStore(private val context: Context) {
     suspend fun savePreference(key: String, value: String) {
         val prefKey = stringPreferencesKey("pref_$key")
         context.dataStore.edit { it[prefKey] = value }
+    }
+
+    suspend fun saveGoals(goals: String) {
+        context.dataStore.edit { it[KEY_GOALS] = goals }
+    }
+
+    suspend fun clearAll() {
+        context.dataStore.edit { it.clear() }
     }
 }

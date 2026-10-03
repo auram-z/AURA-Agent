@@ -13,48 +13,57 @@
 | اندروید | پروژه Kotlin/Compose |
 | وب | [`web/`](web/) |
 
-**نسخه فعلی: 2.2 — گفتار بدون محدودیت + شبکه جهانی**
+**نسخه فعلی: 2.3.0-learning — سیستم یادگیری کامل**
 
 ---
 
-## قابلیت‌های جدید (v2.2)
+## قابلیت‌های جدید (v2.3) — سیستم یادگیری
 
-### 🎙️ گفتار بدون محدودیت
-- **شنیدن مداوم (Continuous Listening)** — بدون محدودیت زمانی
-- **TTS کامل** — پاسخ‌های بلند به صورت chunk پخش می‌شوند (بدون سقف ۳۰۰ کاراکتر)
-- دستورات:
-  - «شنیدن مداوم» / «گفتار مداوم» / «صدا بدون محدودیت»
-  - «توقف شنیدن»
-- وب: دابل‌کلیک روی 🎙️ = شنیدن مداوم
+| نوع | وضعیت | توضیح |
+|-----|--------|--------|
+| **حافظه (Memory)** | ✅ + Confirmation | ذخیره با تأیید صریح کاربر |
+| **بازخورد (Feedback)** | ✅ | rating، correction |
+| **دانش (Knowledge)** | ✅ | استخراج و نگهداری دانش |
+| **آموزش مدل** | ✅ اسکلت | pipeline آفلاین برای fine-tune |
 
-### 🌐 اتصال به شبکه سراسری اینترنت جهانی
-- تایم‌اوت‌های طولانی برای APIهای جهانی (xAI، Binance)
-- Retry خودکار روی قطعی موقت
-- ابزار «وضعیت شبکه / اینترنت»
-- تشخیص آنلاین/آفلاین
-- فقط HTTPS (امن)
+- **آنلاین + آفلاین**: صف `OfflineLearningQueue`
+- **کنترل حافظه**: هیچ اطلاعات مهمی بدون تأیید شما ذخیره نمی‌شود
 
----
+جزئیات: [`docs/learning.md`](docs/learning.md)
 
-## امنیت (v2.1+)
-
-- `.gitignore` قوی برای secretها و APK
-- اندروید: `usesCleartextTraffic=false`، `allowBackup=false`، Keystore/`SecureStore`
-- وب: CSP + اجبار HTTPS + پاک‌سازی کامل داده
-- جزئیات: [SECURITY.md](SECURITY.md)
-
----
-
-## اجرای وب
-
-```bash
-cd web && python -m http.server 8080
+```
+app/.../learning/
+├── ConfirmationGate.kt
+├── LearningManager.kt
+├── FeedbackStore.kt
+├── KnowledgeStore.kt
+├── OfflineLearningQueue.kt
+└── TrainingPipeline.kt
 ```
 
-## اجرای اندروید
+---
 
-`local.properties` (commit نشود):
+## قابلیت‌های v2.2
 
+### 🎙️ گفتار بدون محدودیت
+- شنیدن مداوم + TTS کامل
+
+### 🌐 شبکه جهانی
+- تایم‌اوت طولانی + Retry + فقط HTTPS
+
+---
+
+## امنیت
+
+جزئیات: [SECURITY.md](SECURITY.md)
+
+---
+
+## اجرا
+
+**وب:** `cd web && python -m http.server 8080`
+
+**اندروید** — `local.properties`:
 ```properties
 AURA_API_KEY=...
 AURA_BASE_URL=https://api.x.ai/v1
