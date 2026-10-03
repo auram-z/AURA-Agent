@@ -9,6 +9,9 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.aura.agent.ai.tools.AuraTools
+import com.aura.agent.core.AuraCore
+import com.aura.agent.core.BackendKind
+import com.aura.agent.core.RuntimePolicy
 import com.aura.agent.data.AuraUiState
 import com.aura.agent.data.ChatMessage
 import com.aura.agent.data.MemoryStore
@@ -44,6 +47,14 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
     private val knowledgeStore = KnowledgeStore(application)
     private val offlineQueue = OfflineLearningQueue(application)
     private val confirmationGate = ConfirmationGate()
+
+    private val auraCore = AuraCore(
+        context = application,
+        memoryStore = memoryStore,
+        knowledgeStore = knowledgeStore,
+        aiService = aiService,
+        modelConfig = modelConfig
+    )
 
     private val learningManager = LearningManager(
         context = application,
@@ -90,16 +101,17 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                 _uiState.update { it.copy(activeModel = model) }
             }
         }
+        viewModelScope.launch {
+            auraCore.lastBackend.collect { backend ->
+                _uiState.update { it.copy(activeBackend = backend.name) }
+            }
+        }
 
-        // ارتقای خودکار مدل هنگام شروع
         viewModelScope.launch {
             val result = modelUpgrade.checkAndUpgrade(force = false)
             if (result.changed) {
                 _uiState.update {
-                    it.copy(
-                        activeModel = result.activeModel,
-                        lastTrainingReport = result.message
-                    )
+                    it.copy(activeModel = result.activeModel, lastTrainingReport = result.message)
                 }
             }
         }
@@ -113,38 +125,19 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
 
         val mediaJob = detectMediaTranslate(text)
         if (mediaJob != null) {
-            val userMessage = ChatMessage(role = MessageRole.USER, content = text)
-            _uiState.update {
-                it.copy(messages = it.messages + userMessage, isLoading = true, error = null)
-            }
-            viewModelScope.launch {
-                val result = mediaJob()
-                val assistantMessage = ChatMessage(role = MessageRole.ASSISTANT, content = result)
-                _uiState.update {
-                    it.copy(messages = it.messages + assistantMessage, isLoading = false)
-                }
-                voiceService.speak(result.take(800))
-            }
+            enqueueAsync(text) { mediaJob() }
             return
         }
 
-        // دستورات مدل
+        val coreCmd = handleCoreCommands(text)
+        if (coreCmd != null) {
+            enqueueAsync(text) { coreCmd() }
+            return
+        }
+
         val modelCmd = handleModelCommands(text)
         if (modelCmd != null) {
-            val userMessage = ChatMessage(role = MessageRole.USER, content = text)
-            _uiState.update {
-                it.copy(messages = it.messages + userMessage, isLoading = true)
-            }
-            viewModelScope.launch {
-                val reply = modelCmd()
-                _uiState.update {
-                    it.copy(
-                        messages = it.messages + ChatMessage(role = MessageRole.ASSISTANT, content = reply),
-                        isLoading = false
-                    )
-                }
-                voiceService.speak(reply.take(500))
-            }
+            enqueueAsync(text) { modelCmd() }
             return
         }
 
@@ -155,8 +148,8 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         val toolResult = detectAndRunTool(text)
         val userMessage = ChatMessage(role = MessageRole.USER, content = text)
 
-        _uiState.update { state ->
-            state.copy(messages = state.messages + userMessage, isLoading = true, error = null)
+        _uiState.update {
+            it.copy(messages = it.messages + userMessage, isLoading = true, error = null)
         }
 
         viewModelScope.launch {
@@ -166,23 +159,45 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
             val learned = learningManager.buildLearnedContext()
             val baseContext = buildString {
                 append(tools.getAvailableToolsDescription())
-                append("\n\nمدل فعال: $model")
-                append("\nوضعیت شبکه: ${if (_uiState.value.networkOnline) "متصل" else "آفلاین"}")
+                append("\nمدل: $model · سیاست: ${auraCore.policy.value}")
+                append("\nشبکه: ${if (_uiState.value.networkOnline) "آنلاین" else "آفلاین"}")
                 if (learned.isNotBlank()) append("\n\n=== حافظه ===\n$learned")
                 if (toolResult != null) append("\n\nنتیجه ابزار:\n$toolResult")
             }
 
-            val agentResult = agent.run(
-                history = _uiState.value.messages,
-                userText = text,
-                baseContext = baseContext,
-                forceSearch = forceSearch && _uiState.value.networkOnline,
-                modelName = model
-            )
+            // هسته اختصاصی: مسیریابی Local / OnDevice / Remote
+            val policy = auraCore.policy.value
+            val useRemotePath = policy != RuntimePolicy.LOCAL_ONLY &&
+                _uiState.value.networkOnline &&
+                (policy == RuntimePolicy.REMOTE_PREFERRED || forceSearch)
 
-            var finalReply = agentResult.reply
-            if (toolResult != null && finalReply.length < 40) finalReply = toolResult
-            else if (toolResult != null) finalReply = "$toolResult\n\n$finalReply"
+            val finalReply = if (useRemotePath || (policy == RuntimePolicy.HYBRID && _uiState.value.networkOnline && forceSearch)) {
+                val agentResult = agent.run(
+                    history = _uiState.value.messages,
+                    userText = text,
+                    baseContext = baseContext,
+                    forceSearch = forceSearch,
+                    modelName = model
+                )
+                var reply = agentResult.reply
+                if (toolResult != null && reply.length < 40) reply = toolResult
+                else if (toolResult != null) reply = "$toolResult\n\n$reply"
+                reply
+            } else {
+                val coreResp = auraCore.infer(
+                    history = _uiState.value.messages,
+                    userText = text,
+                    systemContext = baseContext
+                )
+                var reply = coreResp.text
+                if (toolResult != null && reply.length < 40) reply = toolResult
+                else if (toolResult != null) reply = "$toolResult\n\n$reply"
+                if (coreResp.backend != BackendKind.REMOTE) {
+                    reply += "\n\n— ${coreResp.backend.name}" +
+                        if (coreResp.offline) " · آفلاین" else ""
+                }
+                reply
+            }
 
             val assistantMessage = ChatMessage(role = MessageRole.ASSISTANT, content = finalReply)
             _uiState.update {
@@ -193,48 +208,91 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun enqueueAsync(userText: String, block: suspend () -> String) {
+        val userMessage = ChatMessage(role = MessageRole.USER, content = userText)
+        _uiState.update {
+            it.copy(messages = it.messages + userMessage, isLoading = true, error = null)
+        }
+        viewModelScope.launch {
+            val reply = block()
+            _uiState.update {
+                it.copy(
+                    messages = it.messages + ChatMessage(role = MessageRole.ASSISTANT, content = reply),
+                    isLoading = false
+                )
+            }
+            voiceService.speak(reply.take(600))
+        }
+    }
+
+    private fun handleCoreCommands(text: String): (suspend () -> String)? {
+        val lower = text.lowercase().trim()
+        return when {
+            lower.contains("وضعیت هسته") || lower.contains("core status") ||
+            lower.contains("وضعیت core") -> {
+                { auraCore.statusReport() }
+            }
+            lower.contains("سخت‌افزار") || lower.contains("hardware") || lower.contains("مشخصات دستگاه") -> {
+                { auraCore.hardwareSummary() }
+            }
+            lower.contains("فقط محلی") || lower.contains("local only") || lower.contains("حالت آفلاین") -> {
+                {
+                    auraCore.setPolicy(RuntimePolicy.LOCAL_ONLY)
+                    _uiState.update { it.copy(runtimePolicy = "LOCAL_ONLY") }
+                    "🔒 سیاست: فقط محلی — بدون وابستگی به API خارجی."
+                }
+            }
+            lower.contains("حالت ترکیبی") || lower.contains("hybrid") -> {
+                {
+                    auraCore.setPolicy(RuntimePolicy.HYBRID)
+                    _uiState.update { it.copy(runtimePolicy = "HYBRID") }
+                    "📡 سیاست: Hybrid — محلی اول، ابری در صورت نیاز."
+                }
+            }
+            lower.contains("ترجیح ابری") || lower.contains("remote preferred") -> {
+                {
+                    auraCore.setPolicy(RuntimePolicy.REMOTE_PREFERRED)
+                    _uiState.update { it.copy(runtimePolicy = "REMOTE_PREFERRED") }
+                    "☁️ سیاست: ترجیح ابری (با fallback محلی)."
+                }
+            }
+            else -> null
+        }
+    }
+
     private fun handleModelCommands(text: String): (suspend () -> String)? {
         val lower = text.lowercase().trim()
         return when {
-            lower.contains("ارتقای مدل") || lower.contains("ارتقا مدل") ||
-            lower.contains("upgrade model") || lower == "بروزرسانی مدل" ||
-            lower.contains("به‌روزرسانی مدل") || lower.contains("مدل جدید") -> {
+            lower.contains("ارتقای مدل") || lower.contains("upgrade model") ||
+            lower.contains("به‌روزرسانی مدل") -> {
                 {
                     val r = modelUpgrade.checkAndUpgrade(force = true)
                     _uiState.update { it.copy(activeModel = r.activeModel) }
                     r.message
                 }
             }
-            lower.contains("مدل فعلی") || lower.contains("وضعیت مدل") || lower == "مدل؟" -> {
+            lower.contains("مدل فعلی") || lower.contains("وضعیت مدل") -> {
                 {
                     val m = modelConfig.getActiveModel()
                     val auto = modelConfig.isAutoUpgradeEnabled()
-                    "مدل فعال: $m\nارتقای خودکار: ${if (auto) "✅ روشن" else "🛑 خاموش"}"
+                    "مدل: $m\nارتقای خودکار: ${if (auto) "✅" else "🛑"}\nسیاست هسته: ${auraCore.policy.value}"
                 }
             }
-            (lower.contains("ارتقای خودکار مدل") || lower.contains("auto upgrade")) &&
-            (lower.contains("روشن") || lower.contains("فعال") || lower.contains("on")) -> {
-                {
-                    modelConfig.setAutoUpgrade(true)
-                    "✅ ارتقای خودکار مدل فعال شد (هر ۱۲ ساعت چک می‌شود)."
-                }
+            lower.contains("ارتقای خودکار مدل") && (lower.contains("روشن") || lower.contains("فعال")) -> {
+                { modelConfig.setAutoUpgrade(true); "✅ ارتقای خودکار مدل روشن" }
             }
-            (lower.contains("ارتقای خودکار مدل") || lower.contains("auto upgrade")) &&
-            (lower.contains("خاموش") || lower.contains("off")) -> {
-                {
-                    modelConfig.setAutoUpgrade(false)
-                    "🛑 ارتقای خودکار مدل خاموش شد."
-                }
+            lower.contains("ارتقای خودکار مدل") && lower.contains("خاموش") -> {
+                { modelConfig.setAutoUpgrade(false); "🛑 ارتقای خودکار خاموش" }
             }
             lower.startsWith("مدل ") && lower.length < 40 -> {
                 {
                     val name = text.removePrefix("مدل ").removePrefix("مدل:").trim()
-                    if (name.isBlank()) "نام مدل را بنویسید. مثال: مدل grok-4.7"
+                    if (name.isBlank()) "مثال: مدل grok-4.7"
                     else {
                         modelConfig.setActiveModel(name)
                         aiService.setModel(name)
                         _uiState.update { it.copy(activeModel = name) }
-                        "✅ مدل فعال شد: $name"
+                        "✅ مدل: $name"
                     }
                 }
             }
@@ -243,18 +301,7 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun translateImageUri(uri: Uri) {
-        val userMessage = ChatMessage(role = MessageRole.USER, content = "📷 ترجمه تصویر")
-        _uiState.update { it.copy(messages = it.messages + userMessage, isLoading = true) }
-        viewModelScope.launch {
-            val result = mediaTranslate.translateImage(uri)
-            _uiState.update {
-                it.copy(
-                    messages = it.messages + ChatMessage(role = MessageRole.ASSISTANT, content = result),
-                    isLoading = false
-                )
-            }
-            voiceService.speak(result.take(600))
-        }
+        enqueueAsync("📷 ترجمه تصویر") { mediaTranslate.translateImage(uri) }
     }
 
     fun translateBitmap(bitmap: Bitmap) {
@@ -272,9 +319,8 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun detectMediaTranslate(text: String): (suspend () -> String)? {
         val lower = text.lowercase().trim()
-        val isTranslateCmd = lower.startsWith("ترجمه") || lower.startsWith("translate") ||
-            lower.contains("ترجمه کن") || lower.contains("به فارسی")
-        val isSubCmd = lower.contains("زیرنویس") || lower.contains("subtitle") || lower.contains("srt")
+        val isTranslateCmd = lower.startsWith("ترجمه") || lower.contains("ترجمه کن") || lower.contains("به فارسی")
+        val isSubCmd = lower.contains("زیرنویس") || lower.contains("subtitle")
         when {
             isSubCmd && text.length < 15 -> return { mediaTranslate.helpText() }
             isSubCmd -> {
@@ -283,9 +329,7 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                 return { mediaTranslate.translateSubtitles(payload) }
             }
             isTranslateCmd -> {
-                val payload = text
-                    .replace(Regex("(?i)ترجمه\\s*(کن)?\\s*(به\\s*فارسی)?[:：]?"), "")
-                    .trim()
+                val payload = text.replace(Regex("(?i)ترجمه\\s*(کن)?\\s*(به\\s*فارسی)?[:：]?"), "").trim()
                 if (payload.length < 2) return { mediaTranslate.helpText() }
                 return { "🇮🇷 ${mediaTranslate.translateText(payload)}" }
             }
@@ -317,9 +361,7 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun processOfflineQueueNow() {
-        OfflineLearningWorker.runOnce(getApplication())
-    }
+    fun processOfflineQueueNow() = OfflineLearningWorker.runOnce(getApplication())
 
     fun resolveConfirmation(decision: ConfirmationGate.Decision, editedContent: String? = null) {
         confirmationGate.resolve(decision, editedContent)
@@ -332,7 +374,7 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         return when {
             lower.contains("زمان") || lower.contains("ساعت") -> tools.executeTool("get_time")
             lower.contains("باتری") -> tools.executeTool("get_battery")
-            lower.contains("دستگاه") -> tools.executeTool("get_device_info")
+            lower.contains("دستگاه") && !lower.contains("سخت") -> tools.executeTool("get_device_info")
             lower.contains("وضعیت شبکه") || lower.contains("اینترنت") -> tools.networkStatus()
             lower.contains("وضعیت معاملات") || lower.contains("پورتفو") -> tools.executeTool("trading_status")
             lower.contains("اسکن بورس") -> tools.executeTool("scan_iran")
@@ -389,7 +431,9 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
             continuousListening = it.continuousListening,
             networkOnline = it.networkOnline,
             autoLearnEnabled = it.autoLearnEnabled,
-            activeModel = it.activeModel
+            activeModel = it.activeModel,
+            runtimePolicy = it.runtimePolicy,
+            activeBackend = it.activeBackend
         )
     }
 

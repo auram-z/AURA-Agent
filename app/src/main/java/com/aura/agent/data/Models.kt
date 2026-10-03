@@ -30,6 +30,8 @@ data class AuraUiState(
     val pendingConfirmation: ConfirmationGate.PendingItem? = null,
     val lastTrainingReport: String? = null,
     val autoLearnEnabled: Boolean = true,
-    /** مدل API فعال (مثلاً grok-4.7) */
-    val activeModel: String = "grok-4.7"
+    val activeModel: String = "grok-4.7",
+    /** LOCAL_ONLY | HYBRID | REMOTE_PREFERRED */
+    val runtimePolicy: String = "HYBRID",
+    val activeBackend: String = "LOCAL"
 )
