@@ -12,8 +12,8 @@ android {
         applicationId = "com.aura.agent"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "2.4.0-learning"
+        versionCode = 7
+        versionName = "2.5.0-translate"
 
         val localProperties = com.android.build.gradle.internal.cxx.configure.gradleLocalProperties(rootDir)
         val apiKey = localProperties.getProperty("AURA_API_KEY", "")
@@ -76,8 +76,6 @@ dependencies {
 
     implementation("androidx.datastore:datastore-preferences:1.1.1")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
-
-    // فاز ۶: WorkManager
     implementation("androidx.work:work-runtime-ktx:2.9.1")
 
     debugImplementation("androidx.compose.ui:ui-tooling")

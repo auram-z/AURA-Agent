@@ -2,8 +2,10 @@ package com.aura.agent.ai
 
 import android.app.Application
 import android.content.Context
+import android.graphics.Bitmap
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.aura.agent.ai.tools.AuraTools
@@ -19,6 +21,7 @@ import com.aura.agent.learning.LearningManager
 import com.aura.agent.learning.OfflineLearningQueue
 import com.aura.agent.learning.OfflineLearningWorker
 import com.aura.agent.learning.TrainingPipeline
+import com.aura.agent.media.MediaTranslateManager
 import com.aura.agent.voice.VoiceService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -31,6 +34,7 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
     private val aiService = AuraAiService()
     private val tools = AuraTools(application)
     private val voiceService = VoiceService(application)
+    private val mediaTranslate = MediaTranslateManager(application)
 
     private val memoryStore = MemoryStore(application)
     private val feedbackStore = FeedbackStore(application)
@@ -72,7 +76,6 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                 _uiState.update { it.copy(pendingConfirmation = pending) }
             }
         }
-
         viewModelScope.launch {
             learningManager.autoLearnEnabled.collect { enabled ->
                 _uiState.update { it.copy(autoLearnEnabled = enabled) }
@@ -86,6 +89,24 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
     fun sendMessage(text: String) {
         if (text.isBlank()) return
 
+        // مسیر ترجمه/زیرنویس (async)
+        val mediaJob = detectMediaTranslate(text)
+        if (mediaJob != null) {
+            val userMessage = ChatMessage(role = MessageRole.USER, content = text)
+            _uiState.update {
+                it.copy(messages = it.messages + userMessage, isLoading = true, error = null)
+            }
+            viewModelScope.launch {
+                val result = mediaJob()
+                val assistantMessage = ChatMessage(role = MessageRole.ASSISTANT, content = result)
+                _uiState.update {
+                    it.copy(messages = it.messages + assistantMessage, isLoading = false)
+                }
+                voiceService.speak(result.take(800))
+            }
+            return
+        }
+
         val toolResult = detectAndRunTool(text)
         val userMessage = ChatMessage(role = MessageRole.USER, content = text)
 
@@ -95,22 +116,19 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             refreshNetworkStatus()
-
             val learned = learningManager.buildLearnedContext()
             val extraContext = buildString {
                 append(tools.getAvailableToolsDescription())
+                append("\n\n")
+                append(mediaTranslate.helpText())
                 append("\n\nوضعیت شبکه: ${if (_uiState.value.networkOnline) "متصل" else "آفلاین"}")
-                append("\nیادگیری خودکار: ${if (_uiState.value.autoLearnEnabled) "فعال" else "خاموش"}")
                 if (learned.isNotBlank()) {
-                    append("\n\n=== حافظه و دانش یادگرفته‌شده ===\n")
-                    append(learned)
+                    append("\n\n=== حافظه ===\n$learned")
                 }
                 if (toolResult != null) append("\n\nنتیجه ابزار:\n$toolResult")
             }
 
-            val history = _uiState.value.messages
-            val result = aiService.chat(history, extraContext)
-
+            val result = aiService.chat(_uiState.value.messages, extraContext)
             result.fold(
                 onSuccess = { reply ->
                     val finalReply = when {
@@ -119,27 +137,95 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                         else -> reply
                     }
                     val assistantMessage = ChatMessage(role = MessageRole.ASSISTANT, content = finalReply)
-                    _uiState.update { state ->
-                        state.copy(messages = state.messages + assistantMessage, isLoading = false)
+                    _uiState.update {
+                        it.copy(messages = it.messages + assistantMessage, isLoading = false)
                     }
                     voiceService.speak(finalReply)
-
-                    learningManager.analyzeAndPropose(
-                        userMessage = userMessage,
-                        assistantMessage = assistantMessage,
-                        isOnline = _uiState.value.networkOnline
-                    )
+                    learningManager.analyzeAndPropose(userMessage, assistantMessage, _uiState.value.networkOnline)
                 },
                 onFailure = { error ->
-                    val msg = toolResult ?: "متأسفانه خطایی رخ داد:\n${error.message}"
-                    val errorMessage = ChatMessage(role = MessageRole.ASSISTANT, content = msg)
-                    _uiState.update { state ->
-                        state.copy(messages = state.messages + errorMessage, isLoading = false, error = error.message)
+                    val msg = toolResult ?: "خطا: ${error.message}"
+                    _uiState.update {
+                        it.copy(
+                            messages = it.messages + ChatMessage(role = MessageRole.ASSISTANT, content = msg),
+                            isLoading = false,
+                            error = error.message
+                        )
                     }
                     voiceService.speak(msg.take(500))
                 }
             )
         }
+    }
+
+    /** ترجمه عکس از گالری */
+    fun translateImageUri(uri: Uri) {
+        val userMessage = ChatMessage(role = MessageRole.USER, content = "📷 ترجمه تصویر به فارسی")
+        _uiState.update {
+            it.copy(messages = it.messages + userMessage, isLoading = true)
+        }
+        viewModelScope.launch {
+            val result = mediaTranslate.translateImage(uri)
+            _uiState.update {
+                it.copy(
+                    messages = it.messages + ChatMessage(role = MessageRole.ASSISTANT, content = result),
+                    isLoading = false
+                )
+            }
+            voiceService.speak(result.take(600))
+        }
+    }
+
+    fun translateBitmap(bitmap: Bitmap) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true) }
+            val result = mediaTranslate.translateImageBitmap(bitmap)
+            _uiState.update {
+                it.copy(
+                    messages = it.messages + ChatMessage(role = MessageRole.ASSISTANT, content = result),
+                    isLoading = false
+                )
+            }
+        }
+    }
+
+    private fun detectMediaTranslate(text: String): (suspend () -> String)? {
+        val lower = text.lowercase().trim()
+        val isTranslateCmd = lower.startsWith("ترجمه") || lower.startsWith("translate") ||
+            lower.contains("ترجمه کن") || lower.contains("به فارسی")
+        val isSubCmd = lower.contains("زیرنویس") || lower.contains("subtitle") || lower.contains("srt")
+
+        when {
+            isSubCmd && (lower.contains("کمک") || lower.contains("راهنما") || text.length < 15) ->
+                return { mediaTranslate.helpText() }
+
+            isSubCmd -> {
+                val payload = text
+                    .replace(Regex("(?i)زیرنویس\\s*(فارسی)?[:：]?"), "")
+                    .replace(Regex("(?i)subtitle[:：]?"), "")
+                    .trim()
+                if (payload.length < 3) return { mediaTranslate.helpText() }
+                return { mediaTranslate.translateSubtitles(payload) }
+            }
+
+            isTranslateCmd -> {
+                val payload = text
+                    .replace(Regex("(?i)ترجمه\\s*(کن)?\\s*(به\\s*فارسی)?[:：]?"), "")
+                    .replace(Regex("(?i)translate\\s*(to\\s*persian|to\\s*farsi)?[:：]?"), "")
+                    .trim()
+                if (payload.length < 2) return { mediaTranslate.helpText() }
+                if (payload.contains("-->") || payload.contains("WEBVTT")) {
+                    return { mediaTranslate.translateSubtitles(payload) }
+                }
+                return { "🇮🇷 ${mediaTranslate.translateText(payload)}" }
+            }
+
+            lower == "ترجمه عکس" || lower == "عکس ترجمه" || lower.contains("ترجمه تصویر") ->
+                return {
+                    "برای ترجمه عکس، از دکمه 📷 استفاده کنید یا تصویر را از گالری انتخاب کنید."
+                }
+        }
+        return null
     }
 
     fun rateMessage(messageId: String, thumbsUp: Boolean) {
@@ -174,9 +260,7 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         confirmationGate.resolve(decision, editedContent)
     }
 
-    fun cancelConfirmation() {
-        confirmationGate.cancel()
-    }
+    fun cancelConfirmation() = confirmationGate.cancel()
 
     private fun detectAndRunTool(text: String): String? {
         val lower = text.lowercase().trim()
@@ -186,51 +270,34 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
             lower.contains("دستگاه") || lower.contains("مدل گوشی") -> tools.executeTool("get_device_info")
             lower.contains("وضعیت شبکه") || lower.contains("اینترنت") -> tools.networkStatus()
             lower.contains("وضعیت معاملات") || lower.contains("پورتفو") -> tools.executeTool("trading_status")
-            lower.contains("اسکن بورس") || lower.contains("بورس ایران") -> tools.executeTool("scan_iran")
+            lower.contains("اسکن بورس") -> tools.executeTool("scan_iran")
             lower.contains("اسکن کریپتو") -> tools.executeTool("scan_crypto")
             lower.contains("معامله خودکار") && (lower.contains("روشن") || lower.contains("فعال")) ->
                 tools.executeTool("auto_on")
             lower.contains("معامله خودکار") && (lower.contains("خاموش") || lower.contains("وقف")) ->
                 tools.executeTool("auto_off")
-            lower.contains("کیل سوییچ") || lower.contains("kill switch") -> tools.executeTool("kill_switch")
-            lower.contains("شنیدن مداوم") || lower.contains("گفتار مداوم") || lower.contains("صدا بدون محدودیت") -> {
-                enableContinuousListening()
-                "✅ شنیدن مداوم فعال شد."
+            lower.contains("کیل سوییچ") -> tools.executeTool("kill_switch")
+            lower.contains("شنیدن مداوم") || lower.contains("گفتار مداوم") -> {
+                enableContinuousListening(); "✅ شنیدن مداوم فعال شد."
             }
             lower.contains("توقف شنیدن") -> {
-                disableContinuousListening()
-                "🛑 شنیدن مداوم خاموش شد."
+                disableContinuousListening(); "🛑 شنیدن مداوم خاموش شد."
             }
             lower.contains("بک‌تست") && lower.contains("بورس") -> tools.backtestIran()
-            lower.contains("بک‌تست") && (lower.contains("btc") || lower.contains("بیتکوین")) ->
-                tools.backtestCryptoSymbol("BTCUSDT")
             lower.contains("بک‌تست") || lower.contains("backtest") -> tools.backtestCrypto()
-
-            // یادگیری خودکار
-            (lower.contains("یادگیری خودکار") || lower.contains("auto learn") || lower.contains("یادگیری اتوماتیک")) &&
-            (lower.contains("روشن") || lower.contains("فعال") || lower.contains("on")) -> {
-                setAutoLearn(true)
-                "✅ یادگیری خودکار فعال شد.\nدانش، بازخورد و «یادت باشه» بدون دیالوگ ذخیره می‌شوند.\nنام کاربر همچنان نیاز به تأیید دارد."
+            (lower.contains("یادگیری خودکار")) && (lower.contains("روشن") || lower.contains("فعال")) -> {
+                setAutoLearn(true); "✅ یادگیری خودکار فعال شد."
             }
-            (lower.contains("یادگیری خودکار") || lower.contains("auto learn") || lower.contains("یادگیری اتوماتیک")) &&
-            (lower.contains("خاموش") || lower.contains("غیرفعال") || lower.contains("off")) -> {
-                setAutoLearn(false)
-                "🛑 یادگیری خودکار خاموش شد. همه ذخیره‌ها نیاز به تأیید شما دارند."
+            (lower.contains("یادگیری خودکار")) && (lower.contains("خاموش")) -> {
+                setAutoLearn(false); "🛑 یادگیری خودکار خاموش شد."
             }
-            lower.contains("وضعیت یادگیری") || lower.contains("یادگیری خودکار؟") -> {
-                if (_uiState.value.autoLearnEnabled)
-                    "یادگیری خودکار: ✅ فعال"
-                else
-                    "یادگیری خودکار: 🛑 خاموش"
+            lower.contains("وضعیت یادگیری") ->
+                if (_uiState.value.autoLearnEnabled) "یادگیری خودکار: ✅ فعال" else "یادگیری خودکار: 🛑 خاموش"
+            lower.contains("آماده‌سازی آموزش") -> {
+                prepareTrainingData(); "در حال آماده‌سازی داده آموزش..."
             }
-
-            lower.contains("آماده‌سازی آموزش") || lower.contains("export training") -> {
-                prepareTrainingData()
-                "در حال آماده‌سازی داده آموزش مدل..."
-            }
-            lower.contains("پردازش صف") || lower.contains("صف آفلاین") -> {
-                processOfflineQueueNow()
-                "پردازش صف یادگیری آفلاین شروع شد."
+            lower.contains("پردازش صف") -> {
+                processOfflineQueueNow(); "پردازش صف آفلاین شروع شد."
             }
             else -> null
         }
