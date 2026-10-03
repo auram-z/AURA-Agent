@@ -12,8 +12,8 @@ android {
         applicationId = "com.aura.agent"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "2.2.0-global"
+        versionCode = 5
+        versionName = "2.3.0-learning"
 
         val localProperties = com.android.build.gradle.internal.cxx.configure.gradleLocalProperties(rootDir)
         val apiKey = localProperties.getProperty("AURA_API_KEY", "")

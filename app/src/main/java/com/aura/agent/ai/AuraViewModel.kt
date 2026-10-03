@@ -9,7 +9,13 @@ import androidx.lifecycle.viewModelScope
 import com.aura.agent.ai.tools.AuraTools
 import com.aura.agent.data.AuraUiState
 import com.aura.agent.data.ChatMessage
+import com.aura.agent.data.MemoryStore
 import com.aura.agent.data.MessageRole
+import com.aura.agent.learning.ConfirmationGate
+import com.aura.agent.learning.FeedbackStore
+import com.aura.agent.learning.KnowledgeStore
+import com.aura.agent.learning.LearningManager
+import com.aura.agent.learning.OfflineLearningQueue
 import com.aura.agent.voice.VoiceService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -22,6 +28,23 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
     private val aiService = AuraAiService()
     private val tools = AuraTools(application)
     private val voiceService = VoiceService(application)
+
+    // ── Learning system ──────────────────────────────────────────────
+    private val memoryStore = MemoryStore(application)
+    private val feedbackStore = FeedbackStore(application)
+    private val knowledgeStore = KnowledgeStore(application)
+    private val offlineQueue = OfflineLearningQueue(application)
+    private val confirmationGate = ConfirmationGate()
+
+    private val learningManager = LearningManager(
+        context = application,
+        memoryStore = memoryStore,
+        feedbackStore = feedbackStore,
+        knowledgeStore = knowledgeStore,
+        offlineQueue = offlineQueue,
+        confirmationGate = confirmationGate,
+        scope = viewModelScope
+    )
 
     private val _uiState = MutableStateFlow(AuraUiState())
     val uiState: StateFlow<AuraUiState> = _uiState.asStateFlow()
@@ -37,6 +60,14 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         voiceService.onSpeakingStateChanged = { speaking ->
             _uiState.update { it.copy(isSpeaking = speaking) }
         }
+
+        // همگام‌سازی پیشنهاد تأیید با UI
+        viewModelScope.launch {
+            confirmationGate.pendingConfirmation.collect { pending ->
+                _uiState.update { it.copy(pendingConfirmation = pending) }
+            }
+        }
+
         refreshNetworkStatus()
     }
 
@@ -73,8 +104,14 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                     _uiState.update { state ->
                         state.copy(messages = state.messages + assistantMessage, isLoading = false)
                     }
-                    // پخش کامل بدون محدودیت طول
                     voiceService.speak(finalReply)
+
+                    // ── یادگیری: تحلیل و پیشنهاد ذخیره ──
+                    learningManager.analyzeAndPropose(
+                        userMessage = userMessage,
+                        assistantMessage = assistantMessage,
+                        isOnline = _uiState.value.networkOnline
+                    )
                 },
                 onFailure = { error ->
                     val msg = toolResult ?: "متأسفانه خطایی رخ داد:\n${error.message}"
@@ -86,6 +123,15 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                 }
             )
         }
+    }
+
+    /** تصمیم کاربر روی پیشنهاد ذخیره حافظه/بازخورد */
+    fun resolveConfirmation(decision: ConfirmationGate.Decision, editedContent: String? = null) {
+        confirmationGate.resolve(decision, editedContent)
+    }
+
+    fun cancelConfirmation() {
+        confirmationGate.cancel()
     }
 
     private fun detectAndRunTool(text: String): String? {
@@ -115,7 +161,6 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
             lower.contains("کیل سوییچ") || lower.contains("kill switch") || lower.contains("توقف اورژانسی") ->
                 tools.executeTool("kill_switch")
 
-            // Continuous voice
             lower.contains("شنیدن مداوم") || lower.contains("گفتار مداوم") ||
             lower.contains("صدا بدون محدودیت") || lower.contains("continuous") -> {
                 enableContinuousListening()
@@ -126,7 +171,6 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                 "🛑 شنیدن مداوم خاموش شد."
             }
 
-            // Backtest
             lower.contains("بک‌تست") && lower.contains("بورس") -> tools.backtestIran()
             lower.contains("بک تست") && lower.contains("بورس") -> tools.backtestIran()
             lower.contains("backtest") && lower.contains("iran") -> tools.backtestIran()
@@ -181,6 +225,7 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         AuraUiState(
             continuousListening = it.continuousListening,
             networkOnline = it.networkOnline
+            // حافظه بلندمدت پاک نمی‌شود
         )
     }
 

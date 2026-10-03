@@ -39,6 +39,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.aura.agent.ai.AuraViewModel
 import com.aura.agent.data.ChatMessage
 import com.aura.agent.data.MessageRole
+import com.aura.agent.learning.ConfirmationGate
 import com.aura.agent.ui.theme.AuraTheme
 
 class MainActivity : ComponentActivity() {
@@ -75,11 +76,17 @@ fun AuraChatScreen(viewModel: AuraViewModel = viewModel()) {
     val keyboardController = LocalSoftwareKeyboardController.current
 
     var inputText by remember { mutableStateOf("") }
+    var editText by remember { mutableStateOf("") }
 
     LaunchedEffect(uiState.messages.size) {
         if (uiState.messages.isNotEmpty()) {
             listState.animateScrollToItem(uiState.messages.size - 1)
         }
+    }
+
+    // وقتی پیشنهاد تأیید آمد، متن ویرایش را پر کن
+    LaunchedEffect(uiState.pendingConfirmation) {
+        uiState.pendingConfirmation?.let { editText = it.rawContent }
     }
 
     Box(
@@ -130,7 +137,6 @@ fun AuraChatScreen(viewModel: AuraViewModel = viewModel()) {
                     .padding(12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // دکمه صدا
                 FloatingActionButton(
                     onClick = {
                         if (uiState.isListening) {
@@ -203,6 +209,70 @@ fun AuraChatScreen(viewModel: AuraViewModel = viewModel()) {
                 }
             }
         }
+
+        // ── دیالوگ تأیید ذخیره حافظه / بازخورد ──
+        uiState.pendingConfirmation?.let { pending ->
+            AlertDialog(
+                onDismissRequest = { viewModel.cancelConfirmation() },
+                title = {
+                    Text(
+                        when (pending.category) {
+                            ConfirmationGate.Category.MEMORY_FACT -> "ذخیره در حافظه؟"
+                            ConfirmationGate.Category.FEEDBACK -> "ذخیره بازخورد؟"
+                            ConfirmationGate.Category.KNOWLEDGE -> "ذخیره دانش؟"
+                            else -> "ذخیره اطلاعات؟"
+                        },
+                        color = Color(0xFF38BDF8)
+                    )
+                },
+                text = {
+                    Column {
+                        Text(pending.summary, color = Color(0xFF94A3B8), fontSize = 13.sp)
+                        Spacer(modifier = Modifier.height(12.dp))
+                        OutlinedTextField(
+                            value = editText,
+                            onValueChange = { editText = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("محتوا (قابل ویرایش)") },
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White,
+                                focusedBorderColor = Color(0xFF38BDF8),
+                                unfocusedBorderColor = Color(0xFF334155),
+                                cursorColor = Color(0xFF38BDF8),
+                                focusedLabelColor = Color(0xFF94A3B8),
+                                unfocusedLabelColor = Color(0xFF64748B)
+                            ),
+                            maxLines = 5
+                        )
+                    }
+                },
+                confirmButton = {
+                    Row {
+                        TextButton(
+                            onClick = {
+                                viewModel.resolveConfirmation(
+                                    ConfirmationGate.Decision.EDIT_AND_APPROVE,
+                                    editText.takeIf { it != pending.rawContent }
+                                )
+                            }
+                        ) {
+                            Text("✅ ذخیره", color = Color(0xFF22C55E))
+                        }
+                        TextButton(
+                            onClick = {
+                                viewModel.resolveConfirmation(ConfirmationGate.Decision.REJECT)
+                            }
+                        ) {
+                            Text("❌ رد", color = Color(0xFFEF4444))
+                        }
+                    }
+                },
+                containerColor = Color(0xFF1E293B),
+                titleContentColor = Color.White,
+                textContentColor = Color.White
+            )
+        }
     }
 }
 
@@ -223,7 +293,7 @@ fun WelcomeMessage() {
         )
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            "دستیار هوشمند شخصی شما\nمی‌توانید با صدا یا متن صحبت کنید.\nAt your service.",
+            "دستیار هوشمند شخصی شما\nمی‌توانید با صدا یا متن صحبت کنید.\nحافظه با تأیید شما ذخیره می‌شود.\nAt your service.",
             fontSize = 15.sp,
             color = Color(0xFF94A3B8),
             textAlign = TextAlign.Center,
