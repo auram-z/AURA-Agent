@@ -12,15 +12,14 @@ android {
         applicationId = "com.aura.agent"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "2.2.0-global"
+        versionCode = 5
+        versionName = "2.3.0-learning"
 
         val localProperties = com.android.build.gradle.internal.cxx.configure.gradleLocalProperties(rootDir)
         val apiKey = localProperties.getProperty("AURA_API_KEY", "")
         val baseUrl = localProperties.getProperty("AURA_BASE_URL", "https://api.x.ai/v1")
         val model = localProperties.getProperty("AURA_MODEL", "grok-beta")
 
-        // فقط از local.properties — در CI بدون کلید هم build می‌شود
         buildConfigField("String", "AURA_API_KEY", "\"$apiKey\"")
         buildConfigField("String", "AURA_BASE_URL", "\"$baseUrl\"")
         buildConfigField("String", "AURA_MODEL", "\"$model\"")
@@ -76,8 +75,6 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 
     implementation("androidx.datastore:datastore-preferences:1.1.1")
-
-    // Secure storage
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
     debugImplementation("androidx.compose.ui:ui-tooling")

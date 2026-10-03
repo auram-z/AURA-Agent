@@ -9,7 +9,13 @@ import androidx.lifecycle.viewModelScope
 import com.aura.agent.ai.tools.AuraTools
 import com.aura.agent.data.AuraUiState
 import com.aura.agent.data.ChatMessage
+import com.aura.agent.data.MemoryStore
 import com.aura.agent.data.MessageRole
+import com.aura.agent.learning.ConfirmationGate
+import com.aura.agent.learning.FeedbackStore
+import com.aura.agent.learning.KnowledgeStore
+import com.aura.agent.learning.LearningManager
+import com.aura.agent.learning.OfflineLearningQueue
 import com.aura.agent.voice.VoiceService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -22,6 +28,22 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
     private val aiService = AuraAiService()
     private val tools = AuraTools(application)
     private val voiceService = VoiceService(application)
+
+    private val memoryStore = MemoryStore(application)
+    private val feedbackStore = FeedbackStore(application)
+    private val knowledgeStore = KnowledgeStore(application)
+    private val offlineQueue = OfflineLearningQueue(application)
+    private val confirmationGate = ConfirmationGate()
+
+    private val learningManager = LearningManager(
+        context = application,
+        memoryStore = memoryStore,
+        feedbackStore = feedbackStore,
+        knowledgeStore = knowledgeStore,
+        offlineQueue = offlineQueue,
+        confirmationGate = confirmationGate,
+        scope = viewModelScope
+    )
 
     private val _uiState = MutableStateFlow(AuraUiState())
     val uiState: StateFlow<AuraUiState> = _uiState.asStateFlow()
@@ -37,6 +59,13 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         voiceService.onSpeakingStateChanged = { speaking ->
             _uiState.update { it.copy(isSpeaking = speaking) }
         }
+
+        viewModelScope.launch {
+            confirmationGate.pendingConfirmation.collect { pending ->
+                _uiState.update { it.copy(pendingConfirmation = pending) }
+            }
+        }
+
         refreshNetworkStatus()
     }
 
@@ -73,8 +102,13 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                     _uiState.update { state ->
                         state.copy(messages = state.messages + assistantMessage, isLoading = false)
                     }
-                    // پخش کامل بدون محدودیت طول
                     voiceService.speak(finalReply)
+
+                    learningManager.analyzeAndPropose(
+                        userMessage = userMessage,
+                        assistantMessage = assistantMessage,
+                        isOnline = _uiState.value.networkOnline
+                    )
                 },
                 onFailure = { error ->
                     val msg = toolResult ?: "متأسفانه خطایی رخ داد:\n${error.message}"
@@ -88,34 +122,32 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun resolveConfirmation(decision: ConfirmationGate.Decision, editedContent: String? = null) {
+        confirmationGate.resolve(decision, editedContent)
+    }
+
+    fun cancelConfirmation() {
+        confirmationGate.cancel()
+    }
+
     private fun detectAndRunTool(text: String): String? {
         val lower = text.lowercase().trim()
         return when {
             lower.contains("زمان") || lower.contains("ساعت") -> tools.executeTool("get_time")
             lower.contains("باتری") -> tools.executeTool("get_battery")
             lower.contains("دستگاه") || lower.contains("مدل گوشی") -> tools.executeTool("get_device_info")
-
             lower.contains("وضعیت شبکه") || lower.contains("اینترنت") || lower.contains("اتصال شبکه") ->
                 tools.networkStatus()
-
             lower.contains("وضعیت معاملات") || lower.contains("پورتفو") ||
             lower.contains("وضعیت پورتفو") -> tools.executeTool("trading_status")
-
-            lower.contains("اسکن بورس") || lower.contains("بورس ایران") ->
-                tools.executeTool("scan_iran")
-
+            lower.contains("اسکن بورس") || lower.contains("بورس ایران") -> tools.executeTool("scan_iran")
             lower.contains("اسکن کریپتو") -> tools.executeTool("scan_crypto")
-
             lower.contains("معامله خودکار") && (lower.contains("روشن") || lower.contains("فعال")) ->
                 tools.executeTool("auto_on")
-
             lower.contains("معامله خودکار") && (lower.contains("خاموش") || lower.contains("وقف")) ->
                 tools.executeTool("auto_off")
-
             lower.contains("کیل سوییچ") || lower.contains("kill switch") || lower.contains("توقف اورژانسی") ->
                 tools.executeTool("kill_switch")
-
-            // Continuous voice
             lower.contains("شنیدن مداوم") || lower.contains("گفتار مداوم") ||
             lower.contains("صدا بدون محدودیت") || lower.contains("continuous") -> {
                 enableContinuousListening()
@@ -125,23 +157,18 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                 disableContinuousListening()
                 "🛑 شنیدن مداوم خاموش شد."
             }
-
-            // Backtest
             lower.contains("بک‌تست") && lower.contains("بورس") -> tools.backtestIran()
             lower.contains("بک تست") && lower.contains("بورس") -> tools.backtestIran()
             lower.contains("backtest") && lower.contains("iran") -> tools.backtestIran()
-
             lower.contains("بک‌تست") && (lower.contains("btc") || lower.contains("بیتکوین")) ->
                 tools.backtestCryptoSymbol("BTCUSDT")
             lower.contains("بک‌تست") && (lower.contains("eth") || lower.contains("اتر")) ->
                 tools.backtestCryptoSymbol("ETHUSDT")
-
             lower.contains("بک‌تست") && lower.contains("کریپتو") -> tools.backtestCrypto()
             lower.contains("بک تست") && lower.contains("کریپتو") -> tools.backtestCrypto()
             lower.contains("backtest") && lower.contains("crypto") -> tools.backtestCrypto()
             lower.contains("بک‌تست") || lower.contains("بک تست") || lower.contains("backtest") ->
                 tools.backtestCrypto()
-
             else -> null
         }
     }
@@ -170,28 +197,19 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun toggleContinuousListening() {
-        if (_uiState.value.continuousListening) {
-            disableContinuousListening()
-        } else {
-            enableContinuousListening()
-        }
+        if (_uiState.value.continuousListening) disableContinuousListening() else enableContinuousListening()
     }
 
     fun clearConversation() = _uiState.update {
-        AuraUiState(
-            continuousListening = it.continuousListening,
-            networkOnline = it.networkOnline
-        )
+        AuraUiState(continuousListening = it.continuousListening, networkOnline = it.networkOnline)
     }
 
     fun refreshNetworkStatus() {
-        val online = isNetworkAvailable()
-        _uiState.update { it.copy(networkOnline = online) }
+        _uiState.update { it.copy(networkOnline = isNetworkAvailable()) }
     }
 
     private fun isNetworkAvailable(): Boolean {
-        val cm = getApplication<Application>()
-            .getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val cm = getApplication<Application>().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         val network = cm.activeNetwork ?: return false
         val caps = cm.getNetworkCapabilities(network) ?: return false
         return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
