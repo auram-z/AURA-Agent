@@ -7,9 +7,10 @@
   const modal = $("settingsModal");
   const wipeModal = $("wipeModal");
 
-  const SYSTEM_PROMPT = `شما AURA هستید — ایجنت هوشمند شخصی الهام‌گرفته از جارویس.
-مؤدب، دقیق، کمی شوخ‌طبع. همیشه At your service. به زبان کاربر پاسخ بده.
-پاسخ‌ها می‌توانند کامل و بدون محدودیت طول باشند.`;
+  const SYSTEM_PROMPT = `شما AURA هستید — هوش مصنوعی پیشرفته.
+مؤدب، دقیق، کمی شوخ‌طبع. At your service. به زبان کاربر پاسخ بده.`;
+
+  const DEFAULT_MODEL = "grok-4.7";
 
   let history = [];
   let busy = false;
@@ -22,17 +23,48 @@
   function requireHttps(url) {
     const u = (url || "").trim();
     if (!u.startsWith("https://")) {
-      throw new Error("فقط آدرس HTTPS مجاز است (اتصال امن به شبکه جهانی).");
+      throw new Error("فقط آدرس HTTPS مجاز است.");
     }
     return u.replace(/\/$/, "");
   }
 
   function loadCfg() {
+    let model = localStorage.getItem("aura_model") || DEFAULT_MODEL;
+    if (model === "grok-beta") model = DEFAULT_MODEL;
     return {
       key: localStorage.getItem("aura_api_key") || "",
       base: localStorage.getItem("aura_base_url") || "https://api.x.ai/v1",
-      model: localStorage.getItem("aura_model") || "grok-beta",
+      model,
     };
+  }
+
+  async function tryAutoUpgradeModel(cfg) {
+    if (!cfg.key || !navigator.onLine) return cfg;
+    try {
+      const base = requireHttps(cfg.base);
+      const res = await fetch(base + "/models", {
+        headers: { Authorization: "Bearer " + cfg.key },
+      });
+      if (!res.ok) return cfg;
+      const data = await res.json();
+      const ids = (data.data || []).map((m) => m.id);
+      const preferred = ["grok-4.7", "grok-4-latest", "grok-4.6", "grok-4.5", "grok-4"];
+      for (const p of preferred) {
+        const found = ids.find((id) => id.toLowerCase() === p);
+        if (found && found !== cfg.model) {
+          localStorage.setItem("aura_model", found);
+          addSystem("✅ مدل ارتقا یافت: " + cfg.model + " → " + found);
+          return { ...cfg, model: found };
+        }
+      }
+      if (ids.includes(cfg.model)) return cfg;
+      const best = preferred.find((p) => ids.includes(p));
+      if (best) {
+        localStorage.setItem("aura_model", best);
+        return { ...cfg, model: best };
+      }
+    } catch (_) {}
+    return cfg;
   }
 
   function saveCfg() {
@@ -45,9 +77,9 @@
       }
       localStorage.setItem("aura_api_key", key);
       localStorage.setItem("aura_base_url", base);
-      localStorage.setItem("aura_model", $("cfgModel").value.trim() || "grok-beta");
+      localStorage.setItem("aura_model", $("cfgModel").value.trim() || DEFAULT_MODEL);
       modal.classList.add("hidden");
-      addSystem("تنظیمات امن ذخیره شد (فقط همین مرورگر · HTTPS جهانی).");
+      addSystem("تنظیمات ذخیره شد · مدل: " + (localStorage.getItem("aura_model") || DEFAULT_MODEL));
     } catch (e) {
       addSystem("خطا: " + e.message);
     }
@@ -59,7 +91,7 @@
     continuousMode = false;
     wipeModal.classList.add("hidden");
     showWelcome();
-    addSystem("همه داده‌های محلی AURA پاک شد.");
+    addSystem("همه داده‌های محلی پاک شد.");
   }
 
   function showWelcome() {
@@ -67,12 +99,7 @@
       <div class="welcome">
         <div style="font-size:48px">🌌</div>
         <h2>سلام، من AURA هستم</h2>
-        <p>نسخه وب · گفتار بدون محدودیت · شبکه جهانی<br/>At your service.</p>
-        <p style="font-size:0.85rem;margin-top:12px">
-          از ⚙️ کلید API را وارد کنید (فقط HTTPS).<br/>
-          دوبار کلیک روی 🎙️ = شنیدن مداوم<br/>
-          🧹 پاک‌سازی کامل کلید و چت
-        </p>
+        <p>مدل پیش‌فرض: ${DEFAULT_MODEL}<br/>At your service.</p>
       </div>`;
   }
 
@@ -96,25 +123,32 @@
 
   async function runTool(text) {
     const t = text.trim().toLowerCase();
-    if (t.includes("شنیدن مداوم") || t.includes("گفتار مداوم") || t.includes("صدا بدون محدودیت")) {
+    if (t.includes("ارتقای مدل") || t.includes("ارتقا مدل")) {
+      const cfg = loadCfg();
+      const next = await tryAutoUpgradeModel(cfg);
+      return "مدل فعال: " + next.model;
+    }
+    if (t.includes("مدل فعلی") || t === "مدل؟") {
+      return "مدل فعال: " + loadCfg().model;
+    }
+    if (t.includes("شنیدن مداوم") || t.includes("گفتار مداوم")) {
       continuousMode = true;
       if (recognition && !recognizing) {
         recognizing = true;
         btnMic.classList.add("listening");
         recognition.start();
       }
-      return "✅ شنیدن مداوم فعال شد. بدون محدودیت صحبت کنید. برای توقف بگویید «توقف شنیدن».";
+      return "✅ شنیدن مداوم فعال شد.";
     }
-    if (t.includes("توقف شنیدن") || t.includes("خاموش کردن صدا")) {
+    if (t.includes("توقف شنیدن")) {
       continuousMode = false;
       if (recognition && recognizing) recognition.stop();
       return "🛑 شنیدن مداوم خاموش شد.";
     }
     if (t.includes("وضعیت شبکه") || t.includes("اینترنت")) {
-      const online = navigator.onLine;
-      return online
-        ? "🌐 اتصال به اینترنت جهانی: ✅ آنلاین (navigator.onLine)"
-        : "🌐 اتصال به اینترنت جهانی: ❌ آفلاین";
+      return navigator.onLine
+        ? "🌐 آنلاین"
+        : "🌐 آفلاین";
     }
     if (!window.AuraTrading) return null;
     if (t.includes("وضعیت") && (t.includes("پورتفو") || t.includes("معامل")))
@@ -127,21 +161,18 @@
     if (t.includes("معامله خودکار") && (t.includes("خاموش") || t.includes("وقف")))
       return AuraTrading.setAuto(false);
     if (t.includes("کیل") || t.includes("kill")) return AuraTrading.killSwitch();
-    if (t.includes("ادامه معاملات")) return AuraTrading.releaseKill();
     return null;
   }
 
   async function chat(userText, toolResult) {
-    const cfg = loadCfg();
-    if (!cfg.key) throw new Error("API Key تنظیم نشده. از تنظیمات وارد کنید.");
-    if (!navigator.onLine) throw new Error("اتصال به اینترنت جهانی برقرار نیست.");
+    let cfg = loadCfg();
+    cfg = await tryAutoUpgradeModel(cfg);
+    if (!cfg.key) throw new Error("API Key تنظیم نشده.");
+    if (!navigator.onLine) throw new Error("آفلاین هستید.");
     const base = requireHttps(cfg.base);
 
-    const msgs = [{ role: "system", content: SYSTEM_PROMPT }];
-    if (toolResult) {
-      msgs.push({ role: "system", content: "نتیجه ابزار:\n" + toolResult });
-    }
-    // تاریخچه گسترده‌تر — بدون محدودیت سخت
+    const msgs = [{ role: "system", content: SYSTEM_PROMPT + "\nمدل: " + cfg.model }];
+    if (toolResult) msgs.push({ role: "system", content: "نتیجه ابزار:\n" + toolResult });
     const hist = history.length > 50 ? history.slice(-50) : history;
     for (const m of hist) msgs.push(m);
     msgs.push({ role: "user", content: userText });
@@ -160,31 +191,28 @@
           model: cfg.model,
           messages: msgs,
           temperature: 0.7,
-          max_tokens: 4096,
+          max_tokens: 8192,
         }),
         signal: controller.signal,
       });
 
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error(data.error?.message || "API error " + res.status + " — شبکه جهانی را بررسی کنید");
+        throw new Error(data.error?.message || "API error " + res.status);
       }
       const content = data.choices?.[0]?.message?.content?.trim();
-      if (!content) throw new Error("پاسخ خالی از مدل");
+      if (!content) throw new Error("پاسخ خالی");
       return content;
     } finally {
       clearTimeout(timeout);
     }
   }
 
-  /** TTS بدون محدودیت طول — chunk خودکار */
   function speak(text) {
     if (!window.speechSynthesis || !text) return;
     window.speechSynthesis.cancel();
-
     const chunks = chunkText(text, 400);
     let i = 0;
-
     function next() {
       if (i >= chunks.length) return;
       const u = new SpeechSynthesisUtterance(chunks[i++]);
@@ -250,7 +278,6 @@
       addBubble("assistant", "خطا: " + e.message);
     } finally {
       busy = false;
-      // در حالت مداوم بعد از پاسخ دوباره گوش بده
       if (continuousMode && fromVoice && recognition && !recognizing) {
         setTimeout(() => {
           recognizing = true;
@@ -267,12 +294,11 @@
     recognition = new SR();
     recognition.lang = "fa-IR";
     recognition.interimResults = false;
-    recognition.continuous = false; // هر دور جدا — continuousMode را خودمان مدیریت می‌کنیم
+    recognition.continuous = false;
     recognition.maxAlternatives = 3;
 
     recognition.onresult = (ev) => {
-      const transcript = ev.results[0][0].transcript;
-      inputEl.value = transcript;
+      inputEl.value = ev.results[0][0].transcript;
       recognizing = false;
       btnMic.classList.remove("listening");
       send(true);
@@ -313,21 +339,18 @@
     }
   });
 
-  // تک‌کلیک = یک‌بار شنیدن | دابل‌کلیک = شنیدن مداوم
   let lastMicClick = 0;
   btnMic.addEventListener("click", () => {
     if (!recognition) {
-      addSystem("تشخیص گفتار در این مرورگر پشتیبانی نمی‌شود.");
+      addSystem("تشخیص گفتار پشتیبانی نمی‌شود.");
       return;
     }
     const now = Date.now();
     if (now - lastMicClick < 400) {
-      // دابل‌کلیک → continuous
       continuousMode = true;
       addSystem("✅ شنیدن مداوم فعال شد.");
     }
     lastMicClick = now;
-
     if (recognizing) {
       continuousMode = false;
       recognition.stop();
@@ -335,9 +358,7 @@
     }
     recognizing = true;
     btnMic.classList.add("listening");
-    try {
-      recognition.start();
-    } catch (e) {
+    try { recognition.start(); } catch (e) {
       recognizing = false;
       btnMic.classList.remove("listening");
     }
@@ -352,19 +373,16 @@
   });
   $("btnCloseCfg").addEventListener("click", () => modal.classList.add("hidden"));
   $("btnSaveCfg").addEventListener("click", saveCfg);
-
-  $("btnClear").addEventListener("click", () => {
-    history = [];
-    showWelcome();
-  });
-
+  $("btnClear").addEventListener("click", () => { history = []; showWelcome(); });
   $("btnWipe").addEventListener("click", () => wipeModal.classList.remove("hidden"));
   $("btnCancelWipe").addEventListener("click", () => wipeModal.classList.add("hidden"));
   $("btnConfirmWipe").addEventListener("click", wipeAll);
 
-  window.addEventListener("online", () => addSystem("🌐 اتصال به اینترنت جهانی برقرار شد."));
-  window.addEventListener("offline", () => addSystem("⚠️ اتصال اینترنت قطع شد."));
+  window.addEventListener("online", () => addSystem("🌐 آنلاین"));
+  window.addEventListener("offline", () => addSystem("⚠️ آفلاین"));
 
   initSpeech();
   showWelcome();
+  // ارتقای خودکار هنگام بارگذاری
+  tryAutoUpgradeModel(loadCfg());
 })();
