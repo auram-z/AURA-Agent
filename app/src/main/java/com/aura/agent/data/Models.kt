@@ -29,6 +29,7 @@ data class AuraUiState(
     val error: String? = null,
     val pendingConfirmation: ConfirmationGate.PendingItem? = null,
     val lastTrainingReport: String? = null,
-    /** یادگیری خودکار فعال است؟ */
-    val autoLearnEnabled: Boolean = true
+    val autoLearnEnabled: Boolean = true,
+    /** مدل API فعال (مثلاً grok-4.7) */
+    val activeModel: String = "grok-4.7"
 )

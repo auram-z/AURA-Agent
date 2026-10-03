@@ -31,6 +31,8 @@ import kotlinx.coroutines.launch
 
 class AuraViewModel(application: Application) : AndroidViewModel(application) {
 
+    private val modelConfig = ModelConfig(application)
+    private val modelUpgrade = ModelAutoUpgrade(modelConfig)
     private val aiService = AuraAiService()
     private val agent = AgentOrchestrator(aiService)
     private val tools = AuraTools(application)
@@ -82,6 +84,25 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                 _uiState.update { it.copy(autoLearnEnabled = enabled) }
             }
         }
+        viewModelScope.launch {
+            modelConfig.activeModel.collect { model ->
+                aiService.setModel(model)
+                _uiState.update { it.copy(activeModel = model) }
+            }
+        }
+
+        // ارتقای خودکار مدل هنگام شروع
+        viewModelScope.launch {
+            val result = modelUpgrade.checkAndUpgrade(force = false)
+            if (result.changed) {
+                _uiState.update {
+                    it.copy(
+                        activeModel = result.activeModel,
+                        lastTrainingReport = result.message
+                    )
+                }
+            }
+        }
 
         OfflineLearningWorker.schedule(application)
         refreshNetworkStatus()
@@ -107,6 +128,26 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
+        // دستورات مدل
+        val modelCmd = handleModelCommands(text)
+        if (modelCmd != null) {
+            val userMessage = ChatMessage(role = MessageRole.USER, content = text)
+            _uiState.update {
+                it.copy(messages = it.messages + userMessage, isLoading = true)
+            }
+            viewModelScope.launch {
+                val reply = modelCmd()
+                _uiState.update {
+                    it.copy(
+                        messages = it.messages + ChatMessage(role = MessageRole.ASSISTANT, content = reply),
+                        isLoading = false
+                    )
+                }
+                voiceService.speak(reply.take(500))
+            }
+            return
+        }
+
         val forceSearch = text.lowercase().let {
             it.startsWith("جستجو") || it.startsWith("سرچ") || it.startsWith("search") ||
                 it.contains("جستجو کن")
@@ -120,14 +161,13 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             refreshNetworkStatus()
+            val model = modelConfig.getActiveModel()
+            aiService.setModel(model)
             val learned = learningManager.buildLearnedContext()
             val baseContext = buildString {
                 append(tools.getAvailableToolsDescription())
-                append("\n\n")
-                append(mediaTranslate.helpText())
-                append("\n\nقابلیت: جستجوی وب خودکار برای اخبار، قیمت، حقایق به‌روز.")
+                append("\n\nمدل فعال: $model")
                 append("\nوضعیت شبکه: ${if (_uiState.value.networkOnline) "متصل" else "آفلاین"}")
-                append("\nیادگیری خودکار: ${if (_uiState.value.autoLearnEnabled) "فعال" else "خاموش"}")
                 if (learned.isNotBlank()) append("\n\n=== حافظه ===\n$learned")
                 if (toolResult != null) append("\n\nنتیجه ابزار:\n$toolResult")
             }
@@ -136,7 +176,8 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                 history = _uiState.value.messages,
                 userText = text,
                 baseContext = baseContext,
-                forceSearch = forceSearch && _uiState.value.networkOnline
+                forceSearch = forceSearch && _uiState.value.networkOnline,
+                modelName = model
             )
 
             var finalReply = agentResult.reply
@@ -152,11 +193,58 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun translateImageUri(uri: Uri) {
-        val userMessage = ChatMessage(role = MessageRole.USER, content = "📷 ترجمه تصویر به فارسی")
-        _uiState.update {
-            it.copy(messages = it.messages + userMessage, isLoading = true)
+    private fun handleModelCommands(text: String): (suspend () -> String)? {
+        val lower = text.lowercase().trim()
+        return when {
+            lower.contains("ارتقای مدل") || lower.contains("ارتقا مدل") ||
+            lower.contains("upgrade model") || lower == "بروزرسانی مدل" ||
+            lower.contains("به‌روزرسانی مدل") || lower.contains("مدل جدید") -> {
+                {
+                    val r = modelUpgrade.checkAndUpgrade(force = true)
+                    _uiState.update { it.copy(activeModel = r.activeModel) }
+                    r.message
+                }
+            }
+            lower.contains("مدل فعلی") || lower.contains("وضعیت مدل") || lower == "مدل؟" -> {
+                {
+                    val m = modelConfig.getActiveModel()
+                    val auto = modelConfig.isAutoUpgradeEnabled()
+                    "مدل فعال: $m\nارتقای خودکار: ${if (auto) "✅ روشن" else "🛑 خاموش"}"
+                }
+            }
+            (lower.contains("ارتقای خودکار مدل") || lower.contains("auto upgrade")) &&
+            (lower.contains("روشن") || lower.contains("فعال") || lower.contains("on")) -> {
+                {
+                    modelConfig.setAutoUpgrade(true)
+                    "✅ ارتقای خودکار مدل فعال شد (هر ۱۲ ساعت چک می‌شود)."
+                }
+            }
+            (lower.contains("ارتقای خودکار مدل") || lower.contains("auto upgrade")) &&
+            (lower.contains("خاموش") || lower.contains("off")) -> {
+                {
+                    modelConfig.setAutoUpgrade(false)
+                    "🛑 ارتقای خودکار مدل خاموش شد."
+                }
+            }
+            lower.startsWith("مدل ") && lower.length < 40 -> {
+                {
+                    val name = text.removePrefix("مدل ").removePrefix("مدل:").trim()
+                    if (name.isBlank()) "نام مدل را بنویسید. مثال: مدل grok-4.7"
+                    else {
+                        modelConfig.setActiveModel(name)
+                        aiService.setModel(name)
+                        _uiState.update { it.copy(activeModel = name) }
+                        "✅ مدل فعال شد: $name"
+                    }
+                }
+            }
+            else -> null
         }
+    }
+
+    fun translateImageUri(uri: Uri) {
+        val userMessage = ChatMessage(role = MessageRole.USER, content = "📷 ترجمه تصویر")
+        _uiState.update { it.copy(messages = it.messages + userMessage, isLoading = true) }
         viewModelScope.launch {
             val result = mediaTranslate.translateImage(uri)
             _uiState.update {
@@ -187,31 +275,20 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         val isTranslateCmd = lower.startsWith("ترجمه") || lower.startsWith("translate") ||
             lower.contains("ترجمه کن") || lower.contains("به فارسی")
         val isSubCmd = lower.contains("زیرنویس") || lower.contains("subtitle") || lower.contains("srt")
-
         when {
-            isSubCmd && (lower.contains("کمک") || lower.contains("راهنما") || text.length < 15) ->
-                return { mediaTranslate.helpText() }
+            isSubCmd && text.length < 15 -> return { mediaTranslate.helpText() }
             isSubCmd -> {
-                val payload = text
-                    .replace(Regex("(?i)زیرنویس\\s*(فارسی)?[:：]?"), "")
-                    .replace(Regex("(?i)subtitle[:：]?"), "")
-                    .trim()
+                val payload = text.replace(Regex("(?i)زیرنویس\\s*(فارسی)?[:：]?"), "").trim()
                 if (payload.length < 3) return { mediaTranslate.helpText() }
                 return { mediaTranslate.translateSubtitles(payload) }
             }
             isTranslateCmd -> {
                 val payload = text
                     .replace(Regex("(?i)ترجمه\\s*(کن)?\\s*(به\\s*فارسی)?[:：]?"), "")
-                    .replace(Regex("(?i)translate\\s*(to\\s*persian|to\\s*farsi)?[:：]?"), "")
                     .trim()
                 if (payload.length < 2) return { mediaTranslate.helpText() }
-                if (payload.contains("-->") || payload.contains("WEBVTT")) {
-                    return { mediaTranslate.translateSubtitles(payload) }
-                }
                 return { "🇮🇷 ${mediaTranslate.translateText(payload)}" }
             }
-            lower == "ترجمه عکس" || lower.contains("ترجمه تصویر") ->
-                return { "از دکمه 📷 برای انتخاب تصویر استفاده کنید." }
         }
         return null
     }
@@ -255,37 +332,26 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         return when {
             lower.contains("زمان") || lower.contains("ساعت") -> tools.executeTool("get_time")
             lower.contains("باتری") -> tools.executeTool("get_battery")
-            lower.contains("دستگاه") || lower.contains("مدل گوشی") -> tools.executeTool("get_device_info")
+            lower.contains("دستگاه") -> tools.executeTool("get_device_info")
             lower.contains("وضعیت شبکه") || lower.contains("اینترنت") -> tools.networkStatus()
             lower.contains("وضعیت معاملات") || lower.contains("پورتفو") -> tools.executeTool("trading_status")
             lower.contains("اسکن بورس") -> tools.executeTool("scan_iran")
             lower.contains("اسکن کریپتو") -> tools.executeTool("scan_crypto")
             lower.contains("معامله خودکار") && (lower.contains("روشن") || lower.contains("فعال")) ->
                 tools.executeTool("auto_on")
-            lower.contains("معامله خودکار") && (lower.contains("خاموش") || lower.contains("وقف")) ->
-                tools.executeTool("auto_off")
+            lower.contains("معامله خودکار") && lower.contains("خاموش") -> tools.executeTool("auto_off")
             lower.contains("کیل سوییچ") -> tools.executeTool("kill_switch")
-            lower.contains("شنیدن مداوم") || lower.contains("گفتار مداوم") -> {
-                enableContinuousListening(); "✅ شنیدن مداوم فعال شد."
-            }
-            lower.contains("توقف شنیدن") -> {
-                disableContinuousListening(); "🛑 شنیدن مداوم خاموش شد."
-            }
-            lower.contains("بک‌تست") && lower.contains("بورس") -> tools.backtestIran()
+            lower.contains("شنیدن مداوم") -> { enableContinuousListening(); "✅ شنیدن مداوم" }
+            lower.contains("توقف شنیدن") -> { disableContinuousListening(); "🛑 توقف شنیدن" }
             lower.contains("بک‌تست") || lower.contains("backtest") -> tools.backtestCrypto()
-            lower.contains("یادگیری خودکار") && (lower.contains("روشن") || lower.contains("فعال")) -> {
-                setAutoLearn(true); "✅ یادگیری خودکار فعال شد."
+            lower.contains("یادگیری خودکار") && lower.contains("روشن") -> {
+                setAutoLearn(true); "✅ یادگیری خودکار"
             }
             lower.contains("یادگیری خودکار") && lower.contains("خاموش") -> {
-                setAutoLearn(false); "🛑 یادگیری خودکار خاموش شد."
+                setAutoLearn(false); "🛑 یادگیری خاموش"
             }
-            lower.contains("وضعیت یادگیری") ->
-                if (_uiState.value.autoLearnEnabled) "یادگیری خودکار: ✅ فعال" else "یادگیری خودکار: 🛑 خاموش"
             lower.contains("آماده‌سازی آموزش") -> {
-                prepareTrainingData(); "در حال آماده‌سازی داده آموزش..."
-            }
-            lower.contains("پردازش صف") -> {
-                processOfflineQueueNow(); "پردازش صف آفلاین شروع شد."
+                prepareTrainingData(); "آماده‌سازی آموزش..."
             }
             else -> null
         }
@@ -322,7 +388,8 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         AuraUiState(
             continuousListening = it.continuousListening,
             networkOnline = it.networkOnline,
-            autoLearnEnabled = it.autoLearnEnabled
+            autoLearnEnabled = it.autoLearnEnabled,
+            activeModel = it.activeModel
         )
     }
 

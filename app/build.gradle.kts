@@ -12,13 +12,13 @@ android {
         applicationId = "com.aura.agent"
         minSdk = 26
         targetSdk = 35
-        versionCode = 8
-        versionName = "2.6.0-agent"
+        versionCode = 9
+        versionName = "2.7.0-grok47"
 
         val localProperties = com.android.build.gradle.internal.cxx.configure.gradleLocalProperties(rootDir)
         val apiKey = localProperties.getProperty("AURA_API_KEY", "")
         val baseUrl = localProperties.getProperty("AURA_BASE_URL", "https://api.x.ai/v1")
-        val model = localProperties.getProperty("AURA_MODEL", "grok-beta")
+        val model = localProperties.getProperty("AURA_MODEL", "grok-4.7")
 
         buildConfigField("String", "AURA_API_KEY", "\"$apiKey\"")
         buildConfigField("String", "AURA_BASE_URL", "\"$baseUrl\"")
