@@ -22,6 +22,10 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.SmartToy
+import androidx.compose.material.icons.filled.ThumbDown
+import androidx.compose.material.icons.filled.ThumbUp
+import androidx.compose.material.icons.outlined.ThumbDown
+import androidx.compose.material.icons.outlined.ThumbUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -38,6 +42,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.aura.agent.ai.AuraViewModel
 import com.aura.agent.data.ChatMessage
+import com.aura.agent.data.MessageFeedback
 import com.aura.agent.data.MessageRole
 import com.aura.agent.learning.ConfirmationGate
 import com.aura.agent.ui.theme.AuraTheme
@@ -92,7 +97,7 @@ fun AuraChatScreen(viewModel: AuraViewModel = viewModel()) {
                 title = {
                     Column {
                         Text("AURA", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color(0xFF38BDF8))
-                        Text("At your service", fontSize = 12.sp, color = Color(0xFF94A3B8))
+                        Text("At your service · v2.4", fontSize = 12.sp, color = Color(0xFF94A3B8))
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF0F172A).copy(alpha = 0.9f))
@@ -105,8 +110,23 @@ fun AuraChatScreen(viewModel: AuraViewModel = viewModel()) {
                 contentPadding = PaddingValues(vertical = 16.dp)
             ) {
                 if (uiState.messages.isEmpty()) item { WelcomeMessage() }
-                items(uiState.messages) { MessageBubble(it) }
+                items(uiState.messages, key = { it.id }) { msg ->
+                    MessageBubble(
+                        message = msg,
+                        onThumbsUp = { viewModel.rateMessage(msg.id, true) },
+                        onThumbsDown = { viewModel.rateMessage(msg.id, false) }
+                    )
+                }
                 if (uiState.isLoading) item { TypingIndicator() }
+            }
+
+            uiState.lastTrainingReport?.let { report ->
+                Text(
+                    report,
+                    color = Color(0xFF22C55E),
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                )
             }
 
             Row(
@@ -226,25 +246,83 @@ fun WelcomeMessage() {
         Text("سلام، من AURA هستم", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color(0xFF38BDF8), textAlign = TextAlign.Center)
         Spacer(Modifier.height(8.dp))
         Text(
-            "دستیار هوشمند شخصی شما\nمی‌توانید با صدا یا متن صحبت کنید.\nحافظه با تأیید شما ذخیره می‌شود.\nAt your service.",
+            "دستیار هوشمند شخصی شما\n👍👎 روی پاسخ‌ها · حافظه با تأیید شما\nAt your service.",
             fontSize = 15.sp, color = Color(0xFF94A3B8), textAlign = TextAlign.Center, lineHeight = 22.sp
         )
     }
 }
 
 @Composable
-fun MessageBubble(message: ChatMessage) {
+fun MessageBubble(
+    message: ChatMessage,
+    onThumbsUp: () -> Unit = {},
+    onThumbsDown: () -> Unit = {}
+) {
     val isUser = message.role == MessageRole.USER
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start, verticalAlignment = Alignment.Top) {
-        if (!isUser) Icon(Icons.Default.SmartToy, null, tint = Color(0xFF38BDF8), modifier = Modifier.padding(end = 8.dp, top = 4.dp).size(28.dp))
-        Surface(
-            shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp, bottomStart = if (isUser) 16.dp else 4.dp, bottomEnd = if (isUser) 4.dp else 16.dp),
-            color = if (isUser) Color(0xFF0EA5E9) else Color(0xFF1E293B),
-            modifier = Modifier.widthIn(max = 300.dp)
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = if (isUser) Alignment.End else Alignment.Start
+    ) {
+        Row(
+            horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
+            verticalAlignment = Alignment.Top
         ) {
-            Text(message.content, color = Color.White, fontSize = 15.sp, modifier = Modifier.padding(12.dp), lineHeight = 22.sp)
+            if (!isUser) {
+                Icon(Icons.Default.SmartToy, null, tint = Color(0xFF38BDF8),
+                    modifier = Modifier.padding(end = 8.dp, top = 4.dp).size(28.dp))
+            }
+            Surface(
+                shape = RoundedCornerShape(
+                    topStart = 16.dp, topEnd = 16.dp,
+                    bottomStart = if (isUser) 16.dp else 4.dp,
+                    bottomEnd = if (isUser) 4.dp else 16.dp
+                ),
+                color = if (isUser) Color(0xFF0EA5E9) else Color(0xFF1E293B),
+                modifier = Modifier.widthIn(max = 300.dp)
+            ) {
+                Text(message.content, color = Color.White, fontSize = 15.sp,
+                    modifier = Modifier.padding(12.dp), lineHeight = 22.sp)
+            }
+            if (isUser) {
+                Icon(Icons.Default.Person, null, tint = Color(0xFF94A3B8),
+                    modifier = Modifier.padding(start = 8.dp, top = 4.dp).size(28.dp))
+            }
         }
-        if (isUser) Icon(Icons.Default.Person, null, tint = Color(0xFF94A3B8), modifier = Modifier.padding(start = 8.dp, top = 4.dp).size(28.dp))
+
+        // فاز ۴: Feedback UI فقط روی پیام‌های دستیار
+        if (!isUser) {
+            Row(
+                modifier = Modifier.padding(start = 36.dp, top = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                IconButton(
+                    onClick = onThumbsUp,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        imageVector = if (message.feedback == MessageFeedback.THUMBS_UP)
+                            Icons.Filled.ThumbUp else Icons.Outlined.ThumbUp,
+                        contentDescription = "خوب",
+                        tint = if (message.feedback == MessageFeedback.THUMBS_UP)
+                            Color(0xFF22C55E) else Color(0xFF64748B),
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                IconButton(
+                    onClick = onThumbsDown,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        imageVector = if (message.feedback == MessageFeedback.THUMBS_DOWN)
+                            Icons.Filled.ThumbDown else Icons.Outlined.ThumbDown,
+                        contentDescription = "بد",
+                        tint = if (message.feedback == MessageFeedback.THUMBS_DOWN)
+                            Color(0xFFEF4444) else Color(0xFF64748B),
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -254,7 +332,8 @@ fun TypingIndicator() {
         Icon(Icons.Default.SmartToy, null, tint = Color(0xFF38BDF8), modifier = Modifier.size(28.dp))
         Spacer(Modifier.width(8.dp))
         Surface(shape = RoundedCornerShape(16.dp), color = Color(0xFF1E293B)) {
-            Text("AURA در حال فکر کردن...", color = Color(0xFF94A3B8), fontSize = 14.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
+            Text("AURA در حال فکر کردن...", color = Color(0xFF94A3B8),
+                fontSize = 14.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
         }
     }
 }
