@@ -16,7 +16,6 @@ import java.util.concurrent.TimeUnit
 
 /**
  * ترجمه خودکار هر زبانی → فارسی با مدل AURA (xAI).
- * متن، زیرنویس، و خروجی OCR را پوشش می‌دهد.
  */
 class TranslateService {
 
@@ -76,9 +75,7 @@ class TranslateService {
             client.newCall(request).execute().use { response ->
                 val raw = response.body?.string().orEmpty()
                 if (!response.isSuccessful) {
-                    return@withContext Result.failure(
-                        Exception("خطای ترجمه (${response.code})")
-                    )
+                    return@withContext Result.failure(Exception("خطای ترجمه (${response.code})"))
                 }
                 val parsed = json.decodeFromString<ChatResponse>(raw)
                 val content = parsed.choices.firstOrNull()?.message?.content?.trim()
@@ -90,33 +87,26 @@ class TranslateService {
         }
     }
 
-    /** ترجمه بلوک‌های زیرنویس (هر خط جدا) */
     suspend fun translateSubtitleBlocks(blocks: List<SubtitleBlock>): Result<List<SubtitleBlock>> =
         withContext(Dispatchers.IO) {
             if (blocks.isEmpty()) return@withContext Result.success(emptyList())
-            val joined = blocks.mapIndexed { i, b ->
-                "[${b.index}] ${b.text}"
-            }.joinToString("\n")
+            val joined = blocks.joinToString("\n") { b -> "[${b.index}] ${b.text}" }
             val translated = toPersian(
                 "این خطوط زیرنویس را به فارسی ترجمه کن. شماره [n] را حفظ کن:\n$joined",
                 sourceHint = "زیرنویس فیلم"
             ).getOrElse { return@withContext Result.failure(it) }
 
             val map = mutableMapOf<Int, String>()
-            Regex("\\[(\\
-d+)\\]\\s*(.+)").findAll(translated).forEach { m ->
+            Regex("\\[(\\d+)\\]\\s*(.+)").findAll(translated).forEach { m ->
                 val idx = m.groupValues[1].toIntOrNull() ?: return@forEach
                 map[idx] = m.groupValues[2].trim()
             }
-            // fallback: اگر پارس نشد، کل متن یکجا
             if (map.isEmpty()) {
                 return@withContext Result.success(
                     listOf(blocks.first().copy(text = translated, index = 1))
                 )
             }
-            Result.success(blocks.map { b ->
-                b.copy(text = map[b.index] ?: b.text)
-            })
+            Result.success(blocks.map { b -> b.copy(text = map[b.index] ?: b.text) })
         }
 
     @Serializable
