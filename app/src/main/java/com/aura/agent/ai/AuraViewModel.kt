@@ -73,9 +73,13 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        // فاز ۶: زمان‌بندی WorkManager
-        OfflineLearningWorker.schedule(application)
+        viewModelScope.launch {
+            learningManager.autoLearnEnabled.collect { enabled ->
+                _uiState.update { it.copy(autoLearnEnabled = enabled) }
+            }
+        }
 
+        OfflineLearningWorker.schedule(application)
         refreshNetworkStatus()
     }
 
@@ -92,9 +96,15 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             refreshNetworkStatus()
 
+            val learned = learningManager.buildLearnedContext()
             val extraContext = buildString {
                 append(tools.getAvailableToolsDescription())
-                append("\n\nوضعیت شبکه: ${if (_uiState.value.networkOnline) "متصل به اینترنت جهانی" else "آفلاین"}")
+                append("\n\nوضعیت شبکه: ${if (_uiState.value.networkOnline) "متصل" else "آفلاین"}")
+                append("\nیادگیری خودکار: ${if (_uiState.value.autoLearnEnabled) "فعال" else "خاموش"}")
+                if (learned.isNotBlank()) {
+                    append("\n\n=== حافظه و دانش یادگرفته‌شده ===\n")
+                    append(learned)
+                }
                 if (toolResult != null) append("\n\nنتیجه ابزار:\n$toolResult")
             }
 
@@ -132,23 +142,23 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** فاز ۴: 👍 / 👎 روی پیام دستیار */
     fun rateMessage(messageId: String, thumbsUp: Boolean) {
         val msg = _uiState.value.messages.find { it.id == messageId } ?: return
         if (msg.role != MessageRole.ASSISTANT) return
-
         val fb = if (thumbsUp) MessageFeedback.THUMBS_UP else MessageFeedback.THUMBS_DOWN
         _uiState.update { state ->
-            state.copy(
-                messages = state.messages.map {
-                    if (it.id == messageId) it.copy(feedback = fb) else it
-                }
-            )
+            state.copy(messages = state.messages.map {
+                if (it.id == messageId) it.copy(feedback = fb) else it
+            })
         }
         learningManager.submitThumbs(messageId, thumbsUp, msg.content)
     }
 
-    /** فاز ۷: export داده آموزش */
+    fun setAutoLearn(enabled: Boolean) {
+        learningManager.setAutoLearn(enabled)
+        _uiState.update { it.copy(autoLearnEnabled = enabled) }
+    }
+
     fun prepareTrainingData() {
         viewModelScope.launch {
             val report = trainingPipeline.prepareDataset()
@@ -174,8 +184,7 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
             lower.contains("زمان") || lower.contains("ساعت") -> tools.executeTool("get_time")
             lower.contains("باتری") -> tools.executeTool("get_battery")
             lower.contains("دستگاه") || lower.contains("مدل گوشی") -> tools.executeTool("get_device_info")
-            lower.contains("وضعیت شبکه") || lower.contains("اینترنت") || lower.contains("اتصال شبکه") ->
-                tools.networkStatus()
+            lower.contains("وضعیت شبکه") || lower.contains("اینترنت") -> tools.networkStatus()
             lower.contains("وضعیت معاملات") || lower.contains("پورتفو") -> tools.executeTool("trading_status")
             lower.contains("اسکن بورس") || lower.contains("بورس ایران") -> tools.executeTool("scan_iran")
             lower.contains("اسکن کریپتو") -> tools.executeTool("scan_crypto")
@@ -183,10 +192,8 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                 tools.executeTool("auto_on")
             lower.contains("معامله خودکار") && (lower.contains("خاموش") || lower.contains("وقف")) ->
                 tools.executeTool("auto_off")
-            lower.contains("کیل سوییچ") || lower.contains("kill switch") || lower.contains("توقف اورژانسی") ->
-                tools.executeTool("kill_switch")
-            lower.contains("شنیدن مداوم") || lower.contains("گفتار مداوم") ||
-            lower.contains("صدا بدون محدودیت") || lower.contains("continuous") -> {
+            lower.contains("کیل سوییچ") || lower.contains("kill switch") -> tools.executeTool("kill_switch")
+            lower.contains("شنیدن مداوم") || lower.contains("گفتار مداوم") || lower.contains("صدا بدون محدودیت") -> {
                 enableContinuousListening()
                 "✅ شنیدن مداوم فعال شد."
             }
@@ -197,10 +204,27 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
             lower.contains("بک‌تست") && lower.contains("بورس") -> tools.backtestIran()
             lower.contains("بک‌تست") && (lower.contains("btc") || lower.contains("بیتکوین")) ->
                 tools.backtestCryptoSymbol("BTCUSDT")
-            lower.contains("بک‌تست") && lower.contains("کریپتو") -> tools.backtestCrypto()
             lower.contains("بک‌تست") || lower.contains("backtest") -> tools.backtestCrypto()
-            lower.contains("آماده‌سازی آموزش") || lower.contains("export training") ||
-            lower.contains("داده fine") -> {
+
+            // یادگیری خودکار
+            (lower.contains("یادگیری خودکار") || lower.contains("auto learn") || lower.contains("یادگیری اتوماتیک")) &&
+            (lower.contains("روشن") || lower.contains("فعال") || lower.contains("on")) -> {
+                setAutoLearn(true)
+                "✅ یادگیری خودکار فعال شد.\nدانش، بازخورد و «یادت باشه» بدون دیالوگ ذخیره می‌شوند.\nنام کاربر همچنان نیاز به تأیید دارد."
+            }
+            (lower.contains("یادگیری خودکار") || lower.contains("auto learn") || lower.contains("یادگیری اتوماتیک")) &&
+            (lower.contains("خاموش") || lower.contains("غیرفعال") || lower.contains("off")) -> {
+                setAutoLearn(false)
+                "🛑 یادگیری خودکار خاموش شد. همه ذخیره‌ها نیاز به تأیید شما دارند."
+            }
+            lower.contains("وضعیت یادگیری") || lower.contains("یادگیری خودکار؟") -> {
+                if (_uiState.value.autoLearnEnabled)
+                    "یادگیری خودکار: ✅ فعال"
+                else
+                    "یادگیری خودکار: 🛑 خاموش"
+            }
+
+            lower.contains("آماده‌سازی آموزش") || lower.contains("export training") -> {
                 prepareTrainingData()
                 "در حال آماده‌سازی داده آموزش مدل..."
             }
@@ -240,7 +264,11 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun clearConversation() = _uiState.update {
-        AuraUiState(continuousListening = it.continuousListening, networkOnline = it.networkOnline)
+        AuraUiState(
+            continuousListening = it.continuousListening,
+            networkOnline = it.networkOnline,
+            autoLearnEnabled = it.autoLearnEnabled
+        )
     }
 
     fun refreshNetworkStatus() {
