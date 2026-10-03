@@ -7,7 +7,6 @@ enum class MessageRole {
     USER, ASSISTANT, SYSTEM
 }
 
-/** بازخورد روی یک پیام: null = هنوز رأی نداده */
 enum class MessageFeedback {
     NONE, THUMBS_UP, THUMBS_DOWN
 }
@@ -29,5 +28,7 @@ data class AuraUiState(
     val networkOnline: Boolean = true,
     val error: String? = null,
     val pendingConfirmation: ConfirmationGate.PendingItem? = null,
-    val lastTrainingReport: String? = null
+    val lastTrainingReport: String? = null,
+    /** یادگیری خودکار فعال است؟ */
+    val autoLearnEnabled: Boolean = true
 )
