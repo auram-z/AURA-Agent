@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.aura.agent.data.ChatMessage
 import com.aura.agent.data.MemoryStore
+import com.aura.agent.data.MessageFeedback
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -16,7 +17,8 @@ class LearningManager(
     private val knowledgeStore: KnowledgeStore,
     private val offlineQueue: OfflineLearningQueue,
     private val confirmationGate: ConfirmationGate,
-    private val scope: CoroutineScope
+    private val scope: CoroutineScope,
+    private val knowledgeExtractor: KnowledgeExtractor = KnowledgeExtractor()
 ) {
 
     companion object {
@@ -40,7 +42,6 @@ class LearningManager(
                         isOnline = isOnline
                     )
                 }
-
                 lower.contains("اسم من") || lower.contains("من هستم") || lower.startsWith("من ") -> {
                     proposeMemory(
                         summary = "احتمالاً نام یا معرفی کاربر",
@@ -49,18 +50,53 @@ class LearningManager(
                         isOnline = isOnline
                     )
                 }
-
                 lower.contains("اشتباهه") || lower.contains("درست نیست") ||
                 lower.contains("غلط") || lower.contains("نه،") -> {
                     proposeFeedback(
                         summary = "بازخورد اصلاحی کاربر",
                         correction = userMessage.content,
+                        messageId = assistantMessage.id,
                         isOnline = isOnline
                     )
                 }
-
-                else -> { }
+                else -> {
+                    // فاز ۵: استخراج دانش با LLM (فقط آنلاین و مکالمات نسبتاً بلند)
+                    if (isOnline && userMessage.content.length > 40) {
+                        tryExtractKnowledge(userMessage, assistantMessage, isOnline)
+                    }
+                }
             }
+        }
+    }
+
+    /** فاز ۴: ثبت thumbs بدون دیالوگ (رأی صریح و کم‌اصطکاک) */
+    fun submitThumbs(
+        messageId: String,
+        thumbsUp: Boolean,
+        messageContent: String
+    ) {
+        scope.launch {
+            feedbackStore.add(
+                FeedbackStore.FeedbackEntry(
+                    id = UUID.randomUUID().toString(),
+                    messageId = messageId,
+                    thumbsUp = thumbsUp,
+                    rating = if (thumbsUp) 5 else 1,
+                    note = messageContent.take(200)
+                )
+            )
+            Log.i(TAG, "Thumbs ${if (thumbsUp) "up" else "down"} for $messageId")
+        }
+    }
+
+    private suspend fun tryExtractKnowledge(
+        userMessage: ChatMessage,
+        assistantMessage: ChatMessage,
+        isOnline: Boolean
+    ) {
+        val items = knowledgeExtractor.extractFromConversation(userMessage, assistantMessage)
+        items.forEach { item ->
+            proposeKnowledge(item.title, item.content, isOnline)
         }
     }
 
@@ -86,7 +122,6 @@ class LearningManager(
                         payload = content
                     )
                 )
-                Log.i(TAG, "Memory job queued (offline)")
             }
             return
         }
@@ -102,12 +137,9 @@ class LearningManager(
                         } else {
                             memoryStore.saveNotes(finalContent)
                         }
-                        Log.i(TAG, "Memory saved after confirmation")
                     }
                 }
-                ConfirmationGate.Decision.REJECT -> {
-                    Log.i(TAG, "Memory save rejected by user")
-                }
+                ConfirmationGate.Decision.REJECT -> { }
             }
         }
     }
@@ -115,6 +147,7 @@ class LearningManager(
     private fun proposeFeedback(
         summary: String,
         correction: String,
+        messageId: String? = null,
         isOnline: Boolean
     ) {
         val item = ConfirmationGate.PendingItem(
@@ -144,10 +177,10 @@ class LearningManager(
                     feedbackStore.add(
                         FeedbackStore.FeedbackEntry(
                             id = UUID.randomUUID().toString(),
+                            messageId = messageId,
                             correction = final
                         )
                     )
-                    Log.i(TAG, "Feedback saved")
                 }
             }
         }
@@ -161,6 +194,18 @@ class LearningManager(
             rawContent = content
         )
 
+        if (!isOnline) {
+            scope.launch {
+                offlineQueue.enqueue(
+                    OfflineLearningQueue.LearningJob(
+                        type = OfflineLearningQueue.JobType.KNOWLEDGE_EXTRACT,
+                        payload = "$title\n$content"
+                    )
+                )
+            }
+            return
+        }
+
         confirmationGate.propose(item) { pending, decision, edited ->
             if (decision != ConfirmationGate.Decision.REJECT) {
                 val final = edited?.takeIf { it.isNotBlank() } ?: pending.rawContent
@@ -169,7 +214,8 @@ class LearningManager(
                         KnowledgeStore.KnowledgeChunk(
                             id = UUID.randomUUID().toString(),
                             title = title,
-                            content = final
+                            content = final,
+                            source = "llm_extract"
                         )
                     )
                 }

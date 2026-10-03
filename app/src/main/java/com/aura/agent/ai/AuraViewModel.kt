@@ -10,12 +10,15 @@ import com.aura.agent.ai.tools.AuraTools
 import com.aura.agent.data.AuraUiState
 import com.aura.agent.data.ChatMessage
 import com.aura.agent.data.MemoryStore
+import com.aura.agent.data.MessageFeedback
 import com.aura.agent.data.MessageRole
 import com.aura.agent.learning.ConfirmationGate
 import com.aura.agent.learning.FeedbackStore
 import com.aura.agent.learning.KnowledgeStore
 import com.aura.agent.learning.LearningManager
 import com.aura.agent.learning.OfflineLearningQueue
+import com.aura.agent.learning.OfflineLearningWorker
+import com.aura.agent.learning.TrainingPipeline
 import com.aura.agent.voice.VoiceService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -45,6 +48,10 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         scope = viewModelScope
     )
 
+    private val trainingPipeline = TrainingPipeline(
+        application, memoryStore, feedbackStore, knowledgeStore
+    )
+
     private val _uiState = MutableStateFlow(AuraUiState())
     val uiState: StateFlow<AuraUiState> = _uiState.asStateFlow()
 
@@ -65,6 +72,9 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                 _uiState.update { it.copy(pendingConfirmation = pending) }
             }
         }
+
+        // فاز ۶: زمان‌بندی WorkManager
+        OfflineLearningWorker.schedule(application)
 
         refreshNetworkStatus()
     }
@@ -122,6 +132,34 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** فاز ۴: 👍 / 👎 روی پیام دستیار */
+    fun rateMessage(messageId: String, thumbsUp: Boolean) {
+        val msg = _uiState.value.messages.find { it.id == messageId } ?: return
+        if (msg.role != MessageRole.ASSISTANT) return
+
+        val fb = if (thumbsUp) MessageFeedback.THUMBS_UP else MessageFeedback.THUMBS_DOWN
+        _uiState.update { state ->
+            state.copy(
+                messages = state.messages.map {
+                    if (it.id == messageId) it.copy(feedback = fb) else it
+                }
+            )
+        }
+        learningManager.submitThumbs(messageId, thumbsUp, msg.content)
+    }
+
+    /** فاز ۷: export داده آموزش */
+    fun prepareTrainingData() {
+        viewModelScope.launch {
+            val report = trainingPipeline.prepareDataset()
+            _uiState.update { it.copy(lastTrainingReport = report.message) }
+        }
+    }
+
+    fun processOfflineQueueNow() {
+        OfflineLearningWorker.runOnce(getApplication())
+    }
+
     fun resolveConfirmation(decision: ConfirmationGate.Decision, editedContent: String? = null) {
         confirmationGate.resolve(decision, editedContent)
     }
@@ -138,8 +176,7 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
             lower.contains("دستگاه") || lower.contains("مدل گوشی") -> tools.executeTool("get_device_info")
             lower.contains("وضعیت شبکه") || lower.contains("اینترنت") || lower.contains("اتصال شبکه") ->
                 tools.networkStatus()
-            lower.contains("وضعیت معاملات") || lower.contains("پورتفو") ||
-            lower.contains("وضعیت پورتفو") -> tools.executeTool("trading_status")
+            lower.contains("وضعیت معاملات") || lower.contains("پورتفو") -> tools.executeTool("trading_status")
             lower.contains("اسکن بورس") || lower.contains("بورس ایران") -> tools.executeTool("scan_iran")
             lower.contains("اسکن کریپتو") -> tools.executeTool("scan_crypto")
             lower.contains("معامله خودکار") && (lower.contains("روشن") || lower.contains("فعال")) ->
@@ -151,24 +188,26 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
             lower.contains("شنیدن مداوم") || lower.contains("گفتار مداوم") ||
             lower.contains("صدا بدون محدودیت") || lower.contains("continuous") -> {
                 enableContinuousListening()
-                "✅ شنیدن مداوم فعال شد. بدون محدودیت زمانی صحبت کنید. برای توقف بگویید «توقف شنیدن»."
+                "✅ شنیدن مداوم فعال شد."
             }
-            lower.contains("توقف شنیدن") || lower.contains("خاموش کردن صدا") -> {
+            lower.contains("توقف شنیدن") -> {
                 disableContinuousListening()
                 "🛑 شنیدن مداوم خاموش شد."
             }
             lower.contains("بک‌تست") && lower.contains("بورس") -> tools.backtestIran()
-            lower.contains("بک تست") && lower.contains("بورس") -> tools.backtestIran()
-            lower.contains("backtest") && lower.contains("iran") -> tools.backtestIran()
             lower.contains("بک‌تست") && (lower.contains("btc") || lower.contains("بیتکوین")) ->
                 tools.backtestCryptoSymbol("BTCUSDT")
-            lower.contains("بک‌تست") && (lower.contains("eth") || lower.contains("اتر")) ->
-                tools.backtestCryptoSymbol("ETHUSDT")
             lower.contains("بک‌تست") && lower.contains("کریپتو") -> tools.backtestCrypto()
-            lower.contains("بک تست") && lower.contains("کریپتو") -> tools.backtestCrypto()
-            lower.contains("backtest") && lower.contains("crypto") -> tools.backtestCrypto()
-            lower.contains("بک‌تست") || lower.contains("بک تست") || lower.contains("backtest") ->
-                tools.backtestCrypto()
+            lower.contains("بک‌تست") || lower.contains("backtest") -> tools.backtestCrypto()
+            lower.contains("آماده‌سازی آموزش") || lower.contains("export training") ||
+            lower.contains("داده fine") -> {
+                prepareTrainingData()
+                "در حال آماده‌سازی داده آموزش مدل..."
+            }
+            lower.contains("پردازش صف") || lower.contains("صف آفلاین") -> {
+                processOfflineQueueNow()
+                "پردازش صف یادگیری آفلاین شروع شد."
+            }
             else -> null
         }
     }
