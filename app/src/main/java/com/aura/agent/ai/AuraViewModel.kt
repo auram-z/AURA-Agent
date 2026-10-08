@@ -24,6 +24,8 @@ import com.aura.agent.learning.LearningManager
 import com.aura.agent.learning.OfflineLearningQueue
 import com.aura.agent.learning.OfflineLearningWorker
 import com.aura.agent.learning.TrainingPipeline
+import com.aura.agent.evolution.CapabilitySource
+import com.aura.agent.evolution.SelfEvolutionEngine
 import com.aura.agent.media.MediaTranslateManager
 import com.aura.agent.voice.VoiceService
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -68,6 +70,13 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
 
     private val trainingPipeline = TrainingPipeline(
         application, memoryStore, feedbackStore, knowledgeStore
+    )
+
+    private val evolutionEngine = SelfEvolutionEngine(
+        context = application,
+        feedbackStore = feedbackStore,
+        knowledgeStore = knowledgeStore,
+        scope = viewModelScope
     )
 
     private val _uiState = MutableStateFlow(AuraUiState())
@@ -118,6 +127,11 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
 
         OfflineLearningWorker.schedule(application)
         refreshNetworkStatus()
+
+        // E6: یک تلاش تکامل خودکار برای قابلیت‌های LOW (اگر روشن باشد)
+        viewModelScope.launch {
+            evolutionEngine.maybeAutoEvolve()
+        }
     }
 
     fun sendMessage(text: String) {
@@ -138,6 +152,12 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         val modelCmd = handleModelCommands(text)
         if (modelCmd != null) {
             enqueueAsync(text) { modelCmd() }
+            return
+        }
+
+        val evoCmd = handleEvolutionCommands(text)
+        if (evoCmd != null) {
+            enqueueAsync(text) { evoCmd() }
             return
         }
 
@@ -162,6 +182,8 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                 append("\nمدل: $model · سیاست: ${auraCore.policy.value}")
                 append("\nشبکه: ${if (_uiState.value.networkOnline) "آنلاین" else "آفلاین"}")
                 if (learned.isNotBlank()) append("\n\n=== حافظه ===\n$learned")
+                val promptAddon = evolutionEngine.promptAddon()
+                if (promptAddon.isNotBlank()) append("\n\n$promptAddon")
                 if (toolResult != null) append("\n\nنتیجه ابزار:\n$toolResult")
             }
 
@@ -317,6 +339,64 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun handleEvolutionCommands(text: String): (suspend () -> String)? {
+        val lower = text.lowercase().trim()
+        return when {
+            lower.contains("وضعیت تکامل") || lower.contains("evolution status") -> {
+                { evolutionEngine.statusSummary() + "\n\n" + evolutionEngine.configStatus() }
+            }
+            lower.contains("قابلیت‌های جدید") || lower.contains("قابلیت های جدید") ||
+            lower.contains("detect capabilities") -> {
+                {
+                    evolutionEngine.detectOnly(
+                        trigger = CapabilitySource.SCHEDULED_SCAN,
+                        userText = text
+                    )
+                    evolutionEngine.lastReport.value ?: "انجام شد."
+                }
+            }
+            lower.contains("شروع تکامل") || lower == "تکامل کن" || lower.contains("run evolution") -> {
+                {
+                    val run = evolutionEngine.runCycle(
+                        trigger = CapabilitySource.USER_REQUEST,
+                        userText = text,
+                        autoApprove = true
+                    )
+                    run.message
+                }
+            }
+            lower.contains("تکامل خودکار") && (lower.contains("روشن") || lower.contains("فعال")) -> {
+                { evolutionEngine.setAutoEvolution(true); "✅ تکامل خودکار روشن (فقط ریسک LOW)" }
+            }
+            lower.contains("تکامل خودکار") && lower.contains("خاموش") -> {
+                { evolutionEngine.setAutoEvolution(false); "🛑 تکامل خودکار خاموش" }
+            }
+            lower.startsWith("rollback به") || lower.startsWith("rollback to") -> {
+                {
+                    val tag = text.substringAfter("به").substringAfter("to").trim()
+                    evolutionEngine.rollback(tag.ifBlank { null }).getOrElse { "❌ ${it.message}" }
+                }
+            }
+            lower == "rollback" || lower.contains("برگشت نسخه") || lower.contains("rollback") -> {
+                {
+                    evolutionEngine.rollback(null).getOrElse { "❌ ${it.message}" }
+                }
+            }
+            lower.contains("لیست نسخه‌ها") || lower.contains("لیست نسخه ها") ||
+            lower.contains("list versions") -> {
+                {
+                    val vers = evolutionEngine.listVersions()
+                    if (vers.isEmpty()) "نسخه‌ای ثبت نشده."
+                    else vers.joinToString("\n") {
+                        val mark = if (it.active) "✅" else "·"
+                        "$mark ${it.tag} (snap=${it.snapshotId.take(12)}…)"
+                    }
+                }
+            }
+            else -> null
+        }
+    }
+
     private fun detectMediaTranslate(text: String): (suspend () -> String)? {
         val lower = text.lowercase().trim()
         val isTranslateCmd = lower.startsWith("ترجمه") || lower.contains("ترجمه کن") || lower.contains("به فارسی")
@@ -451,6 +531,7 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         super.onCleared()
+        evolutionEngine.cancel()
         voiceService.release()
     }
 }
