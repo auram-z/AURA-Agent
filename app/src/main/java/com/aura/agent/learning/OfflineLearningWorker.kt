@@ -13,7 +13,7 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 /**
- * فاز ۶: پردازش دوره‌ای صف یادگیری آفلاین با WorkManager.
+ * پردازش دوره‌ای صف یادگیری آفلاین با WorkManager.
  */
 class OfflineLearningWorker(
     context: Context,
@@ -51,6 +51,7 @@ class OfflineLearningWorker(
             val jobs = queue.pendingJobs.first()
             Log.i(TAG, "Processing ${jobs.size} pending jobs")
 
+            var failures = 0
             for (job in jobs) {
                 try {
                     when (job.type) {
@@ -68,12 +69,16 @@ class OfflineLearningWorker(
                             queue.markDone(job.id)
                         }
                         OfflineLearningQueue.JobType.KNOWLEDGE_EXTRACT -> {
+                            val lines = job.payload.lines()
+                            val title = lines.firstOrNull()?.take(80)?.ifBlank { "آفلاین" } ?: "آفلاین"
+                            val content = lines.drop(1).joinToString("\n").ifBlank { job.payload }
                             knowledgeStore.add(
                                 KnowledgeStore.KnowledgeChunk(
                                     id = UUID.randomUUID().toString(),
-                                    title = "آفلاین",
-                                    content = job.payload,
-                                    source = "offline_queue"
+                                    title = title,
+                                    content = content.take(500),
+                                    source = "offline_queue",
+                                    tags = listOf("offline")
                                 )
                             )
                             queue.markDone(job.id)
@@ -87,12 +92,14 @@ class OfflineLearningWorker(
                         }
                     }
                 } catch (e: Exception) {
+                    failures++
                     Log.e(TAG, "Job ${job.id} failed: ${e.message}")
                     queue.markFailed(job.id)
                 }
             }
             queue.clearCompleted()
-            Result.success()
+            if (failures > 0 && failures == jobs.size) Result.retry()
+            else Result.success()
         } catch (e: Exception) {
             Log.e(TAG, "Worker failed: ${e.message}")
             Result.retry()
