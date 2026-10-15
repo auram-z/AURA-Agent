@@ -128,7 +128,6 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         OfflineLearningWorker.schedule(application)
         refreshNetworkStatus()
 
-        // E6: یک تلاش تکامل خودکار برای قابلیت‌های LOW (اگر روشن باشد)
         viewModelScope.launch {
             evolutionEngine.maybeAutoEvolve()
         }
@@ -176,7 +175,8 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
             refreshNetworkStatus()
             val model = modelConfig.getActiveModel()
             aiService.setModel(model)
-            val learned = learningManager.buildLearnedContext()
+            // تزریق دانش مرتبط با متن کاربر
+            val learned = learningManager.buildLearnedContext(text)
             val baseContext = buildString {
                 append(tools.getAvailableToolsDescription())
                 append("\nمدل: $model · سیاست: ${auraCore.policy.value}")
@@ -187,7 +187,6 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                 if (toolResult != null) append("\n\nنتیجه ابزار:\n$toolResult")
             }
 
-            // هسته اختصاصی: مسیریابی Local / OnDevice / Remote
             val policy = auraCore.policy.value
             val useRemotePath = policy != RuntimePolicy.LOCAL_ONLY &&
                 _uiState.value.networkOnline &&
@@ -441,42 +440,8 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun processOfflineQueueNow() = OfflineLearningWorker.runOnce(getApplication())
-
-    fun resolveConfirmation(decision: ConfirmationGate.Decision, editedContent: String? = null) {
-        confirmationGate.resolve(decision, editedContent)
-    }
-
-    fun cancelConfirmation() = confirmationGate.cancel()
-
     private fun detectAndRunTool(text: String): String? {
-        val lower = text.lowercase().trim()
-        return when {
-            lower.contains("زمان") || lower.contains("ساعت") -> tools.executeTool("get_time")
-            lower.contains("باتری") -> tools.executeTool("get_battery")
-            lower.contains("دستگاه") && !lower.contains("سخت") -> tools.executeTool("get_device_info")
-            lower.contains("وضعیت شبکه") || lower.contains("اینترنت") -> tools.networkStatus()
-            lower.contains("وضعیت معاملات") || lower.contains("پورتفو") -> tools.executeTool("trading_status")
-            lower.contains("اسکن بورس") -> tools.executeTool("scan_iran")
-            lower.contains("اسکن کریپتو") -> tools.executeTool("scan_crypto")
-            lower.contains("معامله خودکار") && (lower.contains("روشن") || lower.contains("فعال")) ->
-                tools.executeTool("auto_on")
-            lower.contains("معامله خودکار") && lower.contains("خاموش") -> tools.executeTool("auto_off")
-            lower.contains("کیل سوییچ") -> tools.executeTool("kill_switch")
-            lower.contains("شنیدن مداوم") -> { enableContinuousListening(); "✅ شنیدن مداوم" }
-            lower.contains("توقف شنیدن") -> { disableContinuousListening(); "🛑 توقف شنیدن" }
-            lower.contains("بک‌تست") || lower.contains("backtest") -> tools.backtestCrypto()
-            lower.contains("یادگیری خودکار") && lower.contains("روشن") -> {
-                setAutoLearn(true); "✅ یادگیری خودکار"
-            }
-            lower.contains("یادگیری خودکار") && lower.contains("خاموش") -> {
-                setAutoLearn(false); "🛑 یادگیری خاموش"
-            }
-            lower.contains("آماده‌سازی آموزش") -> {
-                prepareTrainingData(); "آماده‌سازی آموزش..."
-            }
-            else -> null
-        }
+        return tools.tryHandle(text)
     }
 
     fun startVoiceInput() {
@@ -527,6 +492,14 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         val caps = cm.getNetworkCapabilities(network) ?: return false
         return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
                 caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    }
+
+    fun resolveConfirmation(decision: ConfirmationGate.Decision, edited: String? = null) {
+        confirmationGate.resolve(decision, edited)
+    }
+
+    fun cancelConfirmation() {
+        confirmationGate.cancel()
     }
 
     override fun onCleared() {
