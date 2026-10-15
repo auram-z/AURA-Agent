@@ -13,6 +13,16 @@ class EvolutionPlanner(
 
     companion object {
         private const val TAG = "AuraEvoPlan"
+
+        /** نگاشت ساده حروف فارسی به لاتین برای نام کلاس امن */
+        private val FA_MAP = mapOf(
+            'ا' to "a", 'آ' to "a", 'ب' to "b", 'پ' to "p", 'ت' to "t", 'ث' to "s",
+            'ج' to "j", 'چ' to "ch", 'ح' to "h", 'خ' to "kh", 'د' to "d", 'ذ' to "z",
+            'ر' to "r", 'ز' to "z", 'ژ' to "zh", 'س' to "s", 'ش' to "sh", 'ص' to "s",
+            'ض' to "z", 'ط' to "t", 'ظ' to "z", 'ع' to "a", 'غ' to "gh", 'ف' to "f",
+            'ق' to "gh", 'ک' to "k", 'گ' to "g", 'ل' to "l", 'م' to "m", 'ن' to "n",
+            'و' to "v", 'ه' to "h", 'ی' to "y", 'ئ' to "y", 'ة' to "h", 'ي' to "y"
+        )
     }
 
     fun plan(capability: Capability): Result<EvolutionPlan> {
@@ -30,17 +40,13 @@ class EvolutionPlanner(
         for (mod in modules) {
             val basePath = sandbox.pathForModule(mod) ?: continue
 
-            // امنیت: ماژول security فقط با CRITICAL و تأیید — عملاً در plan خالی می‌ماند مگر LOW path
-            if (mod == "security" && capability.estimatedRisk != RiskLevel.CRITICAL) {
-                continue
-            }
             if (mod == "security") {
-                // عمداً step نمی‌سازیم؛ SafetyPolicy رد می‌کند اگر path اضافه شود
+                // ماژول security هرگز در plan خودکار قرار نمی‌گیرد
                 continue
             }
 
             val featureSlug = slugify(capability.title)
-            val newFile = "$basePath/${featureSlug.replaceFirstChar { it.uppercase() }}Feature.kt"
+            val newFile = "$basePath/${featureSlug}Feature.kt"
 
             steps += PlanStep(
                 order = order++,
@@ -49,16 +55,12 @@ class EvolutionPlanner(
                 rationale = "پیاده‌سازی اسکلت قابلیت «${capability.title}» در ماژول $mod"
             )
             newFiles += newFile
-
-            // در صورت وجود فایل‌های workspace مرتبط، PATCH پیشنهاد بده
-            // (فاز E1: فقط اگر قبلاً در sandbox نوشته شده باشند — لیست در engine پر می‌شود)
-
-            testHints += "unit: ${featureSlug} در $mod"
+            testHints += "unit: $featureSlug در $mod"
         }
 
         if (steps.isEmpty()) {
-            // حداقل یک فایل در evolution یا ai
-            val fallback = "app/src/main/java/com/aura/agent/ai/${slugify(capability.title).replaceFirstChar { it.uppercase() }}Capability.kt"
+            val fallbackName = slugify(capability.title)
+            val fallback = "app/src/main/java/com/aura/agent/ai/${fallbackName}Capability.kt"
             steps += PlanStep(
                 order = 1,
                 action = PlanAction.CREATE,
@@ -69,7 +71,6 @@ class EvolutionPlanner(
             testHints += "smoke: بارگذاری قابلیت جدید"
         }
 
-        // برای risk بالا همیشه تأیید
         val requiresConfirm = capability.estimatedRisk >= RiskLevel.MEDIUM ||
             capability.source == CapabilitySource.USER_REQUEST
 
@@ -97,14 +98,12 @@ class EvolutionPlanner(
             )
         }
 
-        // اگر نیاز به تأیید دارد، plan را برمی‌گردانیم ولی engine باید ConfirmationGate را صدا بزند
         Log.i(TAG, "Plan ready for ${capability.id}: ${steps.size} steps, confirm=${plan.requiresUserConfirm}")
         return Result.success(
             if (report.requiresConfirm) plan.copy(requiresUserConfirm = true) else plan
         )
     }
 
-    /** افزودن PATCH برای فایل‌های موجود در workspace که با ماژول هم‌خوان‌اند */
     suspend fun enrichWithWorkspace(plan: EvolutionPlan, capability: Capability): EvolutionPlan {
         val files = sandbox.listWorkspaceFiles()
         if (files.isEmpty()) return plan
@@ -139,22 +138,32 @@ class EvolutionPlanner(
         return if (report.ok) updated else plan
     }
 
+    /**
+     * نام کلاس امن ASCII از عنوان (فارسی یا انگلیسی).
+     */
     private fun slugify(title: String): String {
-        val ascii = title.lowercase()
-            .replace(Regex("[^a-z0-9ا-ی\\s-]"), "")
-            .trim()
-            .split(Regex("\\s+"))
-            .take(4)
-            .joinToString("") { part ->
-                // برای فارسی یک نام لاتین ساده
-                part.map { ch ->
-                    when (ch) {
-                        in 'a'..'z', in '0'..'9' -> ch
-                        else -> null
-                    }
-                }.filterNotNull().joinToString("").ifBlank { "X" }
+        val sb = StringBuilder()
+        for (ch in title.trim()) {
+            when {
+                ch in 'a'..'z' || ch in 'A'..'Z' || ch in '0'..'9' -> sb.append(ch)
+                ch in FA_MAP -> sb.append(FA_MAP[ch])
+                ch.isWhitespace() || ch == '-' || ch == '_' -> {
+                    if (sb.isNotEmpty() && sb.last() != '_') sb.append('_')
+                }
             }
-        val base = ascii.filter { it.isLetterOrDigit() }.take(32)
-        return if (base.isBlank()) "NewFeature" else base.replaceFirstChar { it.uppercase() }
+            if (sb.length >= 28) break
+        }
+        var base = sb.toString().trim('_')
+        if (base.isBlank()) {
+            base = "Feat" + Integer.toHexString(title.hashCode()).takeLast(6)
+        }
+        // PascalCase
+        return base.split('_')
+            .filter { it.isNotBlank() }
+            .joinToString("") { part ->
+                part.replaceFirstChar { c -> c.uppercaseChar() }
+            }
+            .take(32)
+            .ifBlank { "NewFeature" }
     }
 }
