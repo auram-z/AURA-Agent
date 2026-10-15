@@ -21,7 +21,8 @@ private val Context.evolutionVersionsStore: DataStore<Preferences> by preference
 
 /**
  * فعال‌سازی نسخه یا Rollback (فاز E4).
- * با sandbox_only=true فقط VersionRecord ثبت می‌شود و فایل‌ها در workspace می‌مانند.
+ * با sandbox_only=true فایل‌ها در workspace می‌مانند و VersionRecord + manifest ثبت می‌شود.
+ * با sandbox_only=false همان + نوشتن manifest استقرار برای CI/Gradle.
  */
 class DeployGate(
     private val context: Context,
@@ -77,7 +78,6 @@ class DeployGate(
             val tag = newTag()
             val sandboxOnly = config.isSandboxOnly()
 
-            // ثبت نسخه
             val record = VersionRecord(
                 tag = tag,
                 snapshotId = snapshotId,
@@ -86,12 +86,33 @@ class DeployGate(
                 active = true
             )
 
+            // manifest استقرار برای CI / Gradle sync
+            val manifest = buildString {
+                appendLine("tag=$tag")
+                appendLine("snapshot=$snapshotId")
+                appendLine("sandboxOnly=$sandboxOnly")
+                appendLine("createdAt=${System.currentTimeMillis()}")
+                appendLine("capabilities=${capabilityIds.joinToString(",")}")
+                appendLine("metrics=$metrics")
+                appendLine("patches=${patches.size}")
+                patches.forEach { p ->
+                    appendLine("  ${p.action}\t${p.path}\t${p.content?.length ?: 0}")
+                }
+            }
+            sandbox.writeFile("evolution/artifacts/deploy-$tag.txt", manifest)
+
+            if (!sandboxOnly) {
+                // آماده‌سازی لیست فایل‌ها برای اعمال توسط CI (نه خود APK روی دستگاه)
+                val applyList = patches.joinToString("\n") { "${it.action}|${it.path}" }
+                sandbox.writeFile("evolution/artifacts/apply-$tag.list", applyList)
+                Log.i(TAG, "Deploy manifest written for CI apply: $tag")
+            }
+
             val current = listVersions().map { it.copy(active = false) }
             val updated = (listOf(record) + current).take(config.getKeepVersions())
             persist(updated)
 
             Log.i(TAG, "Deployed $tag sandboxOnly=$sandboxOnly patches=${patches.size}")
-            // با sandbox_only فایل‌ها همین‌جا در workspace هستند — اعمال روی APK در فاز بعد/CI
             record
         }
     }
@@ -105,12 +126,10 @@ class DeployGate(
                 versions.firstOrNull { it.tag == toTag }
                     ?: error("نسخه پیدا نشد: $toTag")
             } else {
-                // آخرین نسخهٔ غیرفعال یا قبلی
                 versions.firstOrNull { !it.active } ?: versions.getOrNull(1)
                     ?: error("نسخهٔ قبلی موجود نیست")
             }
 
-            // بازیابی snapshot به workspace
             snapshots.restore(target.snapshotId, sandbox.workspaceDir).getOrThrow()
 
             val updated = versions.map { it.copy(active = it.tag == target.tag) }
