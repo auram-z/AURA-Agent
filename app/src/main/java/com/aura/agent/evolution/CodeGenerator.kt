@@ -5,7 +5,6 @@ import android.util.Log
 /**
  * تولید اسکلت کد Kotlin بر اساس EvolutionPlan.
  * فاز E2: templateمحور، بدون وابستگی اجباری به Remote.
- * در صورت وجود مدل قوی‌تر می‌توان بعداً خروجی را با LLM غنی کرد.
  */
 class CodeGenerator(
     private val safety: SafetyPolicy = SafetyPolicy()
@@ -34,7 +33,6 @@ class CodeGenerator(
                     )
                 }
                 PlanAction.PATCH -> {
-                    // فاز E2: پچ حداقلی — افزودن کامنت و هوک
                     val content = patchStub(step.path, capability, step.rationale)
                     patches += CodePatch(
                         path = step.path,
@@ -43,7 +41,6 @@ class CodeGenerator(
                     )
                 }
                 PlanAction.DELETE, PlanAction.RENAME -> {
-                    // در E2 حذف/تغییرنام فقط با تأیید و بدون محتوای مخرب
                     if (capability.estimatedRisk >= RiskLevel.HIGH) {
                         return Result.failure(
                             SecurityException("حذف/تغییرنام برای ریسک بالا در E2 مجاز نیست: ${step.path}")
@@ -74,8 +71,47 @@ class CodeGenerator(
             .replace('/', '.')
             .ifBlank { "com.aura.agent.evolution" }
 
-        val safeTitle = capability.title.replace('"', '\'')
+        val module = when {
+            path.contains("/learning/") -> "learning"
+            path.contains("/media/") -> "media"
+            path.contains("/trading/") -> "trading"
+            path.contains("/voice/") -> "voice"
+            path.contains("/core/") -> "core"
+            else -> "ai"
+        }
+
+        val safeTitle = capability.title.replace('"', '\'').take(80)
         val safeDesc = capability.description.take(200).replace('"', '\'')
+
+        val extraApi = when (module) {
+            "learning" -> """
+    fun learnHint(text: String): String {
+        if (!enabled) return "غیرفعال"
+        return "یادگیری ثبت شد: ${'$'}{text.take(80)}"
+    }
+"""
+            "media" -> """
+    fun processMediaHint(kind: String = "text"): String {
+        if (!enabled) return "غیرفعال"
+        return "آماده پردازش رسانه ($kind) — اسکلت E2"
+    }
+"""
+            "trading" -> """
+    fun paperSignalHint(symbol: String = "BTC"): String {
+        if (!enabled) return "غیرفعال"
+        return "سیگنال کاغذی برای $symbol — فقط شبیه‌سازی، بدون LIVE"
+    }
+"""
+            "voice" -> """
+    fun voiceHint(): String {
+        if (!enabled) return "غیرفعال"
+        return "هوک صوتی آماده — STT/TTS را در چرخه بعدی وصل کنید"
+    }
+"""
+            else -> """
+    fun handle(input: String): String = execute(input)
+"""
+        }
 
         return """
 package $packageName
@@ -86,40 +122,40 @@ package $packageName
  * منبع: ${capability.source}
  * ریسک: ${capability.estimatedRisk}
  * دلیل: $rationale
+ * ماژول: $module
  *
- * این اسکلت نقطهٔ شروع است؛ منطق کامل را در چرخه‌های بعدی تکمیل کنید.
+ * اسکلت امن — منطق دامنه را در چرخه‌های بعدی تکمیل کنید.
+ * بدون شبکه ناامن، بدون Runtime.exec، بدون دسترسی به security/.
  */
 object $className {
 
     const val FEATURE_ID = "${capability.id}"
     const val FEATURE_TITLE = "$safeTitle"
+    const val MODULE = "$module"
 
-    /** وضعیت فعال بودن قابلیت */
     @Volatile
     var enabled: Boolean = true
 
     fun description(): String = "$safeDesc"
 
-    /**
-     * نقطه ورود قابلیت — پیاده‌سازی واقعی در نسخه‌های بعدی تکامل.
-     */
     fun execute(input: String = ""): String {
         if (!enabled) return "قابلیت «$safeTitle» غیرفعال است."
         return buildString {
             append("✅ [$className] $safeTitle\n")
-            if (input.isNotBlank()) append("ورودی: ${input.take(120)}\n")
+            append("ماژول: $module | ریسک: ${capability.estimatedRisk}\n")
+            if (input.isNotBlank()) append("ورودی: ${'$'}{input.take(120)}\n")
             append("اسکلت E2 — منطق دامنه را تکمیل کنید.")
         }
     }
 
     fun healthCheck(): Boolean = enabled
+
+$extraApi
 }
 """.trim() + "\n"
     }
 
     private fun patchStub(path: String, capability: Capability, rationale: String): String {
-        // محتوای کامل جایگزین برای فایل‌های workspace که از قبل وجود ندارند
-        // اگر فایل موجود باشد، DeployGate می‌تواند merge کند؛ اینجا اسکلت امن می‌نویسیم
         return scaffoldKotlin(path, capability, "PATCH: $rationale")
     }
 }
