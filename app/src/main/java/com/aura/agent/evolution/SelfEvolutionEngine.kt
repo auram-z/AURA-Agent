@@ -95,7 +95,8 @@ class SelfEvolutionEngine(
 
     /**
      * چرخه کامل E2–E6.
-     * @param autoApprove اگر true، تأیید plan برای ریسک LOW رد می‌شود (حالت auto).
+     * @param autoApprove اگر true، تأیید plan برای ریسک MEDIUM+ نیز پذیرفته می‌شود (دستور صریح کاربر).
+     * در غیر این صورت برای ریسک MEDIUM یا بالاتر، چرخه در PLAN متوقف می‌شود تا کاربر تأیید کند.
      */
     suspend fun runCycle(
         trigger: CapabilitySource = CapabilitySource.USER_REQUEST,
@@ -138,10 +139,22 @@ class SelfEvolutionEngine(
                 return@withContext fail(run, "شکست PLAN: ${err.message}")
             }
             val enriched = planner.enrichWithWorkspace(plan, cap)
+            run = run.copy(plan = enriched)
 
-            if (enriched.requiresUserConfirm && !autoApprove && cap.estimatedRisk >= RiskLevel.MEDIUM) {
-                // در حالت تعاملی: plan را نگه می‌داریم؛ UI می‌تواند با autoApprove=true ادامه دهد
-                // برای سادگی چرخه کامل با autoApprove از دستورات UI
+            // توقف برای تأیید کاربر روی ریسک MEDIUM+
+            if (enriched.requiresUserConfirm && !autoApprove &&
+                cap.estimatedRisk >= RiskLevel.MEDIUM
+            ) {
+                val msg = buildString {
+                    append("⏸️ طرح نیاز به تأیید دارد (ریسک ${cap.estimatedRisk})\n\n")
+                    append(enriched.summary)
+                    append("\n\nبرای ادامه بگویید: «شروع تکامل» یا «تکامل کن»")
+                }
+                return@withContext finish(
+                    run.copy(message = msg),
+                    EvolutionPhase.IDLE,
+                    msg
+                )
             }
 
             val snap = snapshots.create("pre-${cap.id.take(8)}", sandbox.workspaceDir)
@@ -299,7 +312,6 @@ class SelfEvolutionEngine(
         }
     }
 
-    /** E6: اگر auto روشن باشد و قابلیت LOW از feedback/gap باشد، یک چرخه اجرا کن */
     fun maybeAutoEvolve() {
         scope.launch {
             if (!config.isAutoEvolution()) return@launch
