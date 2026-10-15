@@ -175,7 +175,6 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
             refreshNetworkStatus()
             val model = modelConfig.getActiveModel()
             aiService.setModel(model)
-            // تزریق دانش مرتبط با متن کاربر
             val learned = learningManager.buildLearnedContext(text)
             val baseContext = buildString {
                 append(tools.getAvailableToolsDescription())
@@ -441,7 +440,32 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun detectAndRunTool(text: String): String? {
-        return tools.tryHandle(text)
+        val lower = text.lowercase().trim()
+        return when {
+            lower.contains("زمان") || lower.contains("ساعت") -> tools.executeTool("time")
+            lower.contains("باتری") -> tools.executeTool("battery")
+            lower.contains("دستگاه") || lower.contains("مدل گوشی") -> tools.executeTool("device")
+            lower.contains("وضعیت شبکه") || lower.contains("اینترنت") -> tools.executeTool("network")
+            lower.contains("پورتفو") || lower == "وضعیت" || lower.contains("وضعیت معامله") -> tools.executeTool("trading_status")
+            lower.contains("اسکن بورس") || lower.contains("بورس ایران") -> tools.executeTool("scan_iran")
+            lower.contains("اسکن کریپتو") || lower.contains("اسکن crypto") -> tools.executeTool("scan_crypto")
+            lower.contains("معامله خودکار") && (lower.contains("روشن") || lower.contains("فعال")) -> tools.executeTool("auto_on")
+            lower.contains("معامله خودکار") && lower.contains("خاموش") -> tools.executeTool("auto_off")
+            lower.contains("کیل سوییچ") || lower.contains("kill switch") -> tools.executeTool("kill_switch")
+            lower.contains("بک‌تست کریپتو") || lower.contains("بک تست کریپتو") -> tools.executeTool("backtest_crypto")
+            lower.contains("بک‌تست بورس") || lower.contains("بک تست بورس") -> tools.executeTool("backtest_iran")
+            lower.contains("بک‌تست") || lower.contains("backtest") -> tools.backtestCrypto()
+            lower.contains("یادگیری خودکار") && lower.contains("روشن") -> {
+                setAutoLearn(true); "✅ یادگیری خودکار روشن"
+            }
+            lower.contains("یادگیری خودکار") && lower.contains("خاموش") -> {
+                setAutoLearn(false); "🛑 یادگیری خودکار خاموش"
+            }
+            lower.contains("آماده‌سازی آموزش") || lower.contains("آماده سازی آموزش") -> {
+                prepareTrainingData(); "⏳ آماده‌سازی داده آموزش..."
+            }
+            else -> null
+        }
     }
 
     fun startVoiceInput() {
