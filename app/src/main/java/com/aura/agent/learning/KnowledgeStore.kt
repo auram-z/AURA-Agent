@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -42,7 +43,12 @@ class KnowledgeStore(private val context: Context) {
             val current = prefs[KEY_CHUNKS]?.let {
                 runCatching { json.decodeFromString<List<KnowledgeChunk>>(it) }.getOrElse { emptyList() }
             } ?: emptyList()
-            val updated = (current + chunk).takeLast(300)
+            // جلوگیری از تکراری تقریبی
+            val deduped = current.filterNot {
+                it.title.equals(chunk.title, ignoreCase = true) &&
+                    it.content.take(80) == chunk.content.take(80)
+            }
+            val updated = (deduped + chunk).takeLast(300)
             prefs[KEY_CHUNKS] = json.encodeToString(updated)
         }
     }
@@ -60,5 +66,40 @@ class KnowledgeStore(private val context: Context) {
         context.knowledgeDataStore.edit { it.remove(KEY_CHUNKS) }
     }
 
-    suspend fun search(query: String): List<KnowledgeChunk> = emptyList()
+    /**
+     * جستجوی ساده مبتنی بر عنوان، محتوا و تگ‌ها با امتیازدهی.
+     * کلمات کوتاه‌تر از ۲ حرف نادیده گرفته می‌شوند.
+     */
+    suspend fun search(query: String, limit: Int = 20): List<KnowledgeChunk> {
+        val q = query.trim().lowercase()
+        if (q.length < 2) return emptyList()
+
+        val tokens = q.split(Regex("\\s+"))
+            .map { it.trim() }
+            .filter { it.length >= 2 }
+            .distinct()
+        if (tokens.isEmpty()) return emptyList()
+
+        val all = chunks.first()
+        return all.map { chunk ->
+            val titleL = chunk.title.lowercase()
+            val contentL = chunk.content.lowercase()
+            val tagsL = chunk.tags.joinToString(" ").lowercase()
+            var score = 0.0
+            for (t in tokens) {
+                if (titleL == t) score += 5.0
+                else if (titleL.contains(t)) score += 3.0
+                if (tagsL.contains(t)) score += 2.0
+                if (contentL.contains(t)) score += 1.0
+            }
+            // تازگی: حداکثر ~۱ امتیاز برای آیتم‌های جدیدتر
+            val ageDays = (System.currentTimeMillis() - chunk.timestamp).coerceAtLeast(0) / 86_400_000.0
+            score += (1.0 / (1.0 + ageDays / 30.0))
+            chunk to score
+        }
+            .filter { it.second > 0.5 }
+            .sortedByDescending { it.second }
+            .take(limit.coerceIn(1, 50))
+            .map { it.first }
+    }
 }
