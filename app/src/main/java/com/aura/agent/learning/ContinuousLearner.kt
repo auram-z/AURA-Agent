@@ -2,8 +2,10 @@ package com.aura.agent.learning
 
 import android.content.Context
 import android.util.Log
+import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
@@ -17,6 +19,8 @@ import java.util.concurrent.TimeUnit
  *
  * به جای کراول بی‌هدف وب، فقط موضوعات مرتبط با دانش موجود
  * و پرسش‌های اخیر کاربر را دوره‌ای به‌روز می‌کند.
+ *
+ * پیش‌فرض: هر ۲۴ ساعت یک‌بار (با نیاز به شبکه).
  */
 class ContinuousLearner(
     context: Context,
@@ -27,22 +31,45 @@ class ContinuousLearner(
         private const val TAG = "AuraContinuous"
         private const val UNIQUE_NAME = "aura_continuous_learner"
 
-        /** زمان‌بندی پیش‌فرض: هر ۱۲ ساعت */
-        fun schedule(context: Context, intervalHours: Long = 12) {
+        /**
+         * زمان‌بندی پیش‌فرض: هر ۲۴ ساعت.
+         * فقط وقتی شبکه در دسترس باشد اجرا می‌شود.
+         */
+        fun schedule(context: Context, intervalHours: Long = 24) {
+            val constraints = Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.CONNECTED)
+                .build()
+
             val request = PeriodicWorkRequestBuilder<ContinuousLearner>(
-                intervalHours, TimeUnit.HOURS
-            ).build()
+                intervalHours.coerceAtLeast(6), // حداقل ۶ ساعت برای جلوگیری از فشار
+                TimeUnit.HOURS
+            )
+                .setConstraints(constraints)
+                .build()
+
             WorkManager.getInstance(context).enqueueUniquePeriodicWork(
                 UNIQUE_NAME,
                 ExistingPeriodicWorkPolicy.UPDATE,
                 request
             )
-            Log.i(TAG, "Continuous learner scheduled every ${intervalHours}h")
+            Log.i(TAG, "Continuous learner scheduled every ${intervalHours}h (network required)")
         }
 
         fun runOnce(context: Context) {
-            val request = androidx.work.OneTimeWorkRequestBuilder<ContinuousLearner>().build()
+            val request = androidx.work.OneTimeWorkRequestBuilder<ContinuousLearner>()
+                .setConstraints(
+                    Constraints.Builder()
+                        .setRequiredNetworkType(NetworkType.CONNECTED)
+                        .build()
+                )
+                .build()
             WorkManager.getInstance(context).enqueue(request)
+            Log.i(TAG, "Continuous learner one-shot enqueued")
+        }
+
+        fun cancel(context: Context) {
+            WorkManager.getInstance(context).cancelUniqueWork(UNIQUE_NAME)
+            Log.i(TAG, "Continuous learner cancelled")
         }
     }
 
@@ -54,9 +81,9 @@ class ContinuousLearner(
             val detector = ContradictionDetector()
 
             val existing = knowledgeStore.chunks.first()
-            Log.i(TAG, "Starting continuous cycle. Current knowledge: ${existing.size}")
+            Log.i(TAG, "Starting 24h continuous cycle. Current knowledge: ${existing.size}")
 
-            // ۱. موضوعات اولویت‌دار از دانش موجود (عنوان‌های پرتکرار / کم‌اطمینان)
+            // ۱. موضوعات اولویت‌دار از دانش موجود (کم‌اطمینان یا قدیمی)
             val topics = selectRefreshTopics(existing)
             if (topics.isEmpty()) {
                 Log.i(TAG, "No topics to refresh")
@@ -66,7 +93,11 @@ class ContinuousLearner(
             var added = 0
             for (topic in topics.take(4)) { // محدودیت برای باتری و ترافیک
                 try {
-                    val report = searchService.search(topic, maxResults = 5, preferredLangs = listOf("fa", "en"))
+                    val report = searchService.search(
+                        query = topic,
+                        maxResults = 5,
+                        preferredLangs = listOf("fa", "en")
+                    )
                     for (hit in report.hits) {
                         if (hit.snippet.length < 40) continue
 
@@ -79,6 +110,7 @@ class ContinuousLearner(
                         // فقط منابع با حداقل اعتبار ذخیره شوند
                         if (score.confidence < 0.45f) continue
 
+                        val now = System.currentTimeMillis()
                         knowledgeStore.add(
                             KnowledgeStore.KnowledgeChunk(
                                 id = UUID.randomUUID().toString(),
@@ -87,14 +119,14 @@ class ContinuousLearner(
                                 source = hit.sourceLabel,
                                 sourceUrl = hit.url,
                                 language = hit.language,
-                                tags = listOf("continuous", "auto_refresh"),
+                                tags = listOf("continuous", "auto_refresh", "24h"),
                                 confidence = score.confidence,
                                 claims = listOf(
                                     KnowledgeStore.Claim(hit.snippet.take(200))
                                 ),
-                                timestamp = System.currentTimeMillis(),
-                                lastVerifiedAt = System.currentTimeMillis(),
-                                receivedAt = System.currentTimeMillis()
+                                timestamp = now,
+                                lastVerifiedAt = now,
+                                receivedAt = now
                             )
                         )
                         added++
@@ -107,7 +139,7 @@ class ContinuousLearner(
             // ۲. تحلیل تناقض بعد از به‌روزرسانی
             val updated = knowledgeStore.chunks.first()
             val analysis = detector.analyze(updated)
-            Log.i(TAG, "Cycle done. Added=$added | ${analysis.summary}")
+            Log.i(TAG, "24h cycle done. Added=$added | ${analysis.summary}")
 
             // کاهش اطمینان chunkهایی که در تناقض هستند
             analysis.contradictions
@@ -126,18 +158,22 @@ class ContinuousLearner(
 
     /**
      * انتخاب موضوعات برای تازه‌سازی:
-     * - chunkهای با اطمینان پایین
+     * - chunkهای با اطمینان پایین (< 0.6)
      * - chunkهای قدیمی‌تر از ۳۰ روز
-     * - عناوین پرتکرار
+     * - در صورت خالی بودن: موضوعات پیش‌فرض
      */
     private fun selectRefreshTopics(chunks: List<KnowledgeStore.KnowledgeChunk>): List<String> {
-        if (chunks.isEmpty()) return listOf("هوش مصنوعی", "Android development")
+        if (chunks.isEmpty()) {
+            return listOf("هوش مصنوعی", "Android development", "یادگیری ماشین")
+        }
 
         val now = System.currentTimeMillis()
+        val thirtyDaysMs = 30L * 86_400_000
+
         val candidates = chunks
             .filter { chunk ->
                 chunk.confidence < 0.6f ||
-                    (now - chunk.lastVerifiedAt) > 30L * 86_400_000
+                    (now - chunk.lastVerifiedAt) > thirtyDaysMs
             }
             .map { it.title.trim() }
             .filter { it.length in 4..60 }
