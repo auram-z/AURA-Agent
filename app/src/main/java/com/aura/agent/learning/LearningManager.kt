@@ -88,6 +88,7 @@ class LearningManager(
     /**
      * ساخت context از حافظه/دانش برای تزریق به مدل.
      * اگر [query] داده شود، دانش مرتبط با جستجو اولویت دارد.
+     * دانش‌های با اطمینان بالاتر اولویت نمایش دارند.
      */
     suspend fun buildLearnedContext(query: String? = null): String {
         if (!autoLearnSettings.injectContext.first()) return ""
@@ -108,14 +109,21 @@ class LearningManager(
             val selected = if (!query.isNullOrBlank() && query.length >= 2) {
                 val hits = knowledgeStore.search(query, limit = 8)
                 if (hits.isNotEmpty()) hits
-                else knowledgeStore.chunks.first().sortedByDescending { it.timestamp }.take(6)
+                else knowledgeStore.chunks.first()
+                    .sortedByDescending { it.confidence * 0.6f + (it.timestamp / 1e13).toFloat() }
+                    .take(6)
             } else {
-                knowledgeStore.chunks.first().sortedByDescending { it.timestamp }.take(8)
+                knowledgeStore.chunks.first()
+                    .sortedByDescending { it.confidence * 0.6f + (it.timestamp / 1e13).toFloat() }
+                    .take(8)
             }
 
             if (selected.isNotEmpty()) {
-                append("دانش ذخیره‌شده:\n")
-                selected.forEach { append("- ${it.title}: ${it.content.take(140)}\n") }
+                append("دانش ذخیره‌شده (با سطح اطمینان):\n")
+                selected.forEach {
+                    val confPct = (it.confidence * 100).toInt()
+                    append("- [${confPct}%] ${it.title}: ${it.content.take(130)}\n")
+                }
             }
         }.trim()
     }
@@ -144,26 +152,19 @@ class LearningManager(
         val items = knowledgeExtractor.extractFromConversation(userMessage, assistantMessage)
         items.forEach { item ->
             if (auto && isOnline) {
-                knowledgeStore.add(
-                    KnowledgeStore.KnowledgeChunk(
-                        id = UUID.randomUUID().toString(),
-                        title = item.title,
-                        content = item.content,
-                        source = "auto_llm",
-                        tags = listOf("auto")
-                    )
+                val chunk = knowledgeExtractor.toChunk(
+                    item,
+                    source = "auto_llm",
+                    confidence = 0.55f
                 )
+                knowledgeStore.add(chunk)
                 Log.i(TAG, "Auto-saved knowledge: ${item.title}")
             } else {
-                proposeKnowledge(item.title, item.content, isOnline)
+                proposeKnowledge(item.title, item.content, isOnline, item.language)
             }
         }
     }
 
-    /**
-     * ترجیح ضمنی فقط با فیلتر نویز و حداقل طول؛ در حالت auto بدون دیالوگ ذخیره می‌شود
-     * ولی از عبارات مبهم جلوگیری می‌شود.
-     */
     private fun detectImplicitPreference(lower: String, isOnline: Boolean) {
         if (lower.length !in 20..180) return
         if (NOISE_PREF_PHRASES.any { lower.contains(it) }) return
@@ -179,7 +180,6 @@ class LearningManager(
         )
         for ((phrase, _) in prefs) {
             if (!lower.contains(phrase)) continue
-            // باید بعد از عبارت محتوای معنادار باشد
             val idx = lower.indexOf(phrase)
             val after = lower.drop(idx + phrase.length).trim()
             if (after.length < 4) continue
@@ -189,7 +189,6 @@ class LearningManager(
                 val line = lower.take(150)
                 if (existing.contains(line.take(40))) return@launch
 
-                // حتی در auto، ترجیح ضمنی را با تأیید سبک پیشنهاد می‌کنیم اگر آنلاین نیست
                 if (!isOnline) {
                     offlineQueue.enqueue(
                         OfflineLearningQueue.LearningJob(
@@ -320,7 +319,12 @@ class LearningManager(
         }
     }
 
-    fun proposeKnowledge(title: String, content: String, isOnline: Boolean) {
+    fun proposeKnowledge(
+        title: String,
+        content: String,
+        isOnline: Boolean,
+        language: String = "fa"
+    ) {
         val item = ConfirmationGate.PendingItem(
             id = UUID.randomUUID().toString(),
             category = ConfirmationGate.Category.KNOWLEDGE,
@@ -342,12 +346,20 @@ class LearningManager(
             if (decision != ConfirmationGate.Decision.REJECT) {
                 val final = edited?.takeIf { it.isNotBlank() } ?: pending.rawContent
                 scope.launch {
+                    val now = System.currentTimeMillis()
                     knowledgeStore.add(
                         KnowledgeStore.KnowledgeChunk(
                             id = UUID.randomUUID().toString(),
                             title = title,
                             content = final,
-                            source = "llm_extract"
+                            source = "llm_extract",
+                            language = language,
+                            tags = listOf("user_confirmed"),
+                            confidence = 0.70f,
+                            claims = listOf(KnowledgeStore.Claim(final.take(220))),
+                            timestamp = now,
+                            lastVerifiedAt = now,
+                            receivedAt = now
                         )
                     )
                 }
