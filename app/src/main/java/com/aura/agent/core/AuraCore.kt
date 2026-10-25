@@ -10,10 +10,16 @@ import com.aura.agent.learning.KnowledgeStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 
 /**
- * هسته کنترل‌پذیر و اختصاصی AURA.
- * وابستگی اجباری به API خارجی ندارد.
+ * هسته فوق‌هوشمند مستقل AURA.
+ *
+ * اصول:
+ * - بدون وابستگی اجباری به API خارجی
+ * - مسیریابی هوشمند بر اساس سیاست، سخت‌افزار و پیچیدگی
+ * - دانش با سطح اطمینان + تشخیص تناقض در لایه Local
+ * - آنلاین فقط اختیاری و تحت کنترل کاربر
  */
 class AuraCore(
     context: Context,
@@ -25,6 +31,7 @@ class AuraCore(
 
     companion object {
         private const val TAG = "AuraCore"
+        const val CORE_VERSION = "3.2-super-independent"
     }
 
     private val hardware = HardwareProfiler(context)
@@ -50,15 +57,18 @@ class AuraCore(
 
     fun hardwareSummary(): String = hardware.summary()
 
-    fun statusReport(): String {
+    suspend fun statusReport(): String {
         val p = hardware.profile()
+        val kbCount = runCatching { knowledgeStore.chunks.first().size }.getOrDefault(0)
         return buildString {
-            append("🌌 AURA Core Status\n")
+            append("🌌 AURA Super Independent Core\n")
+            append("• نسخه هسته: $CORE_VERSION\n")
             append("• سیاست: ${_policy.value}\n")
             append("• آخرین backend: ${_lastBackend.value}\n")
-            append("• Local: ✅ همیشه\n")
+            append("• Local (مستقل): ✅ همیشه فعال\n")
             append("• OnDevice: ${if (onDevice.isAvailable()) "✅" else "⏳ مدل نصب نشده"}\n")
-            append("• Remote: ${if (remote.isAvailable()) "✅ آماده" else "⚪ اختیاری / غیرفعال"}\n")
+            append("• Remote: ${if (remote.isAvailable()) "✅ آماده (اختیاری)" else "⚪ غیرفعال / بدون کلید"}\n")
+            append("• پایگاه دانش: $kbCount تکه\n")
             append("\n")
             append(hardware.summary())
         }
@@ -66,6 +76,7 @@ class AuraCore(
 
     /**
      * مسیریابی هوشمند بر اساس سیاست + سخت‌افزار + پیچیدگی سؤال.
+     * هسته محلی همیشه در دسترس است و در صورت اطمینان پایین به لایه بالاتر می‌رود.
      */
     suspend fun infer(
         history: List<ChatMessage>,
@@ -85,31 +96,37 @@ class AuraCore(
         Log.i(TAG, "Route order: $order for policy=$policy online=${profile.online}")
 
         var lastError: Throwable? = null
+        var bestLocal: InferenceResponse? = null
+
         for (kind in order) {
             val backend = backendFor(kind) ?: continue
             if (!backend.isAvailable()) continue
             val result = backend.generate(request)
             result.onSuccess { resp ->
-                // اگر Local با confidence پایین بود و Remote در صف بعدی است، ادامه بده
-                if (kind == BackendKind.LOCAL && resp.confidence < 0.7f && order.contains(BackendKind.REMOTE)) {
-                    lastError = null
-                    // keep as candidate but try remote
-                    val remoteTry = remote.takeIf { it.isAvailable() }?.generate(request)
-                    if (remoteTry?.isSuccess == true) {
-                        val r = remoteTry.getOrThrow()
-                        _lastBackend.value = r.backend
-                        return r
+                if (kind == BackendKind.LOCAL) {
+                    bestLocal = resp
+                    // اگر اطمینان محلی کافی بود، همان را برگردان
+                    if (resp.confidence >= 0.7f || policy == RuntimePolicy.LOCAL_ONLY) {
+                        _lastBackend.value = resp.backend
+                        return resp
                     }
+                    // در غیر این صورت سعی کن لایه بالاتر
+                    return@onSuccess
                 }
                 _lastBackend.value = resp.backend
                 return resp
             }.onFailure { lastError = it }
         }
 
-        // آخرین پناه: Local حتی اگر قبلاً fail شده باشد
+        // بهترین پاسخ محلی یا fallback
+        bestLocal?.let {
+            _lastBackend.value = BackendKind.LOCAL
+            return it
+        }
+
         val fallback = local.generate(request).getOrElse {
             InferenceResponse(
-                text = "هسته محلی موقتاً پاسخ نداد: ${lastError?.message ?: it.message}",
+                text = "هسته مستقل موقتاً پاسخ نداد: ${lastError?.message ?: it.message}",
                 backend = BackendKind.LOCAL,
                 offline = true,
                 confidence = 0.1f
@@ -135,10 +152,10 @@ class AuraCore(
                 BackendKind.LOCAL
             )
             RuntimePolicy.HYBRID -> buildList {
-                if (profile.canRunHeavyOnDevice && onDevice.isAvailable()) add(BackendKind.ON_DEVICE)
+                // اول محلی مستقل — اگر کافی نبود بعداً remote
                 add(BackendKind.LOCAL)
-                if (profile.online && complex) add(BackendKind.REMOTE)
-                else if (profile.online) add(BackendKind.REMOTE)
+                if (profile.canRunHeavyOnDevice && onDevice.isAvailable()) add(BackendKind.ON_DEVICE)
+                if (profile.online) add(BackendKind.REMOTE)
             }
             RuntimePolicy.REMOTE_PREFERRED -> buildList {
                 if (profile.online) add(BackendKind.REMOTE)
