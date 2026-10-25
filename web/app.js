@@ -7,8 +7,9 @@
   const modal = $("settingsModal");
   const wipeModal = $("wipeModal");
 
-  const SYSTEM_PROMPT = `شما AURA هستید — هوش مصنوعی پیشرفته.
-مؤدب، دقیق، کمی شوخ‌طبع. At your service. به زبان کاربر پاسخ بده.`;
+  const SYSTEM_PROMPT = `شما AURA هستید — هوش مصنوعی پیشرفته با دسترسی به اینترنت آزاد.
+مؤدب، دقیق، کمی شوخ‌طبع. At your service. به زبان کاربر پاسخ بده.
+اگر کاربر درخواست جستجو یا دانش کرد، از ابزار دانش آنلاین استفاده شده است.`;
 
   const DEFAULT_MODEL = "grok-4.7";
 
@@ -89,6 +90,7 @@
     STORE_KEYS.forEach((k) => localStorage.removeItem(k));
     history = [];
     continuousMode = false;
+    if (window.AuraKnowledge) AuraKnowledge.clear();
     wipeModal.classList.add("hidden");
     showWelcome();
     addSystem("همه داده‌های محلی پاک شد.");
@@ -98,8 +100,11 @@
     messagesEl.innerHTML = `
       <div class="welcome">
         <div style="font-size:48px">🌌</div>
-        <h2>سلام، من AURA هستم</h2>
-        <p>مدل پیش‌فرض: ${DEFAULT_MODEL}<br/>At your service.</p>
+        <h2>سلام، من AURA آنلاین هستم</h2>
+        <p>جستجوی آزاد اینترنت · همگام‌سازی با اندروید<br/>At your service.</p>
+        <p style="font-size:13px;opacity:.7;margin-top:12px">
+          دستورات: جستجو کن … · وضعیت دانش · دانلود بسته دانش · وارد کردن بسته
+        </p>
       </div>`;
   }
 
@@ -123,6 +128,35 @@
 
   async function runTool(text) {
     const t = text.trim().toLowerCase();
+    const original = text.trim();
+
+    // —— دانش آنلاین و همگام‌سازی ——
+    if (window.AuraKnowledge) {
+      if (t.startsWith("جستجو کن") || t.startsWith("جستجو:") || t.startsWith("search ") ||
+          t.startsWith("سرچ کن") || t.includes("در اینترنت جستجو")) {
+        const q = original
+          .replace(/^(جستجو کن|جستجو:|سرچ کن|search)\s*/i, "")
+          .replace(/در اینترنت جستجو( کن)?\s*/i, "")
+          .trim();
+        if (q.length < 2) return "موضوع جستجو را بنویس. مثال: جستجو کن هوش مصنوعی";
+        const r = await AuraKnowledge.searchAndLearn(q);
+        const lines = (r.hits || []).slice(0, 5).map((h, i) =>
+          `${i + 1}. ${h.title}\n   ${(h.snippet || "").slice(0, 180)}`
+        );
+        return (r.message || "") + (lines.length ? "\n\n" + lines.join("\n\n") : "");
+      }
+      if (t.includes("وضعیت دانش") || t.includes("حافظه آنلاین") || t.includes("knowledge status")) {
+        return AuraKnowledge.status();
+      }
+      if (t.includes("دانلود بسته") || t.includes("خروجی دانش") || t.includes("export knowledge") ||
+          t.includes("بسته دانش")) {
+        return AuraKnowledge.downloadPack();
+      }
+      if (t.includes("پاک کردن دانش") || t.includes("پاک دانش آنلاین")) {
+        return AuraKnowledge.clear();
+      }
+    }
+
     if (t.includes("ارتقای مدل") || t.includes("ارتقا مدل")) {
       const cfg = loadCfg();
       const next = await tryAutoUpgradeModel(cfg);
@@ -146,10 +180,9 @@
       return "🛑 شنیدن مداوم خاموش شد.";
     }
     if (t.includes("وضعیت شبکه") || t.includes("اینترنت")) {
-      return navigator.onLine
-        ? "🌐 آنلاین"
-        : "🌐 آفلاین";
+      return navigator.onLine ? "🌐 آنلاین" : "🌐 آفلاین";
     }
+
     if (!window.AuraTrading) return null;
     if (t.includes("وضعیت") && (t.includes("پورتفو") || t.includes("معامل")))
       return AuraTrading.status();
@@ -167,7 +200,7 @@
   async function chat(userText, toolResult) {
     let cfg = loadCfg();
     cfg = await tryAutoUpgradeModel(cfg);
-    if (!cfg.key) throw new Error("API Key تنظیم نشده.");
+    if (!cfg.key) throw new Error("API Key تنظیم نشده. (جستجو و دانش آنلاین بدون کلید هم کار می‌کند)");
     if (!navigator.onLine) throw new Error("آفلاین هستید.");
     const base = requireHttps(cfg.base);
 
@@ -260,10 +293,21 @@
     try {
       const toolResult = await runTool(text);
       let reply;
+      // جستجو و دانش بدون نیاز به API key
+      const isKnowledgeOnly = toolResult && (
+        text.toLowerCase().includes("جستجو") ||
+        text.toLowerCase().includes("سرچ") ||
+        text.toLowerCase().includes("دانش") ||
+        text.toLowerCase().includes("بسته")
+      );
       try {
-        reply = await chat(text, toolResult);
-        if (toolResult && reply.length < 40) reply = toolResult;
-        else if (toolResult) reply = toolResult + "\n\n" + reply;
+        if (isKnowledgeOnly && toolResult) {
+          reply = toolResult;
+        } else {
+          reply = await chat(text, toolResult);
+          if (toolResult && reply.length < 40) reply = toolResult;
+          else if (toolResult) reply = toolResult + "\n\n" + reply;
+        }
       } catch (e) {
         reply = toolResult || ("خطا: " + e.message);
       }
@@ -378,11 +422,10 @@
   $("btnCancelWipe").addEventListener("click", () => wipeModal.classList.add("hidden"));
   $("btnConfirmWipe").addEventListener("click", wipeAll);
 
-  window.addEventListener("online", () => addSystem("🌐 آنلاین"));
+  window.addEventListener("online", () => addSystem("🌐 آنلاین — می‌توانی با اندروید همگام شوی"));
   window.addEventListener("offline", () => addSystem("⚠️ آفلاین"));
 
   initSpeech();
   showWelcome();
-  // ارتقای خودکار هنگام بارگذاری
   tryAutoUpgradeModel(loadCfg());
 })();
