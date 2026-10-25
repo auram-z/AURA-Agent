@@ -37,9 +37,20 @@ class MemoryStore(private val context: Context) {
         context.dataStore.edit { it[KEY_NOTES] = notes }
     }
 
+    /**
+     * ذخیره ترجیح: هم کلید جدا و هم خلاصه در KEY_PREFERENCES
+     * تا buildLearnedContext بتواند آن را ببیند.
+     */
     suspend fun savePreference(key: String, value: String) {
         val prefKey = stringPreferencesKey("pref_$key")
-        context.dataStore.edit { it[prefKey] = value }
+        context.dataStore.edit { prefs ->
+            prefs[prefKey] = value
+            val existing = prefs[KEY_PREFERENCES].orEmpty()
+            val line = value.take(150)
+            if (!existing.contains(line.take(40))) {
+                prefs[KEY_PREFERENCES] = (existing + "\n• $line").trim().take(2000)
+            }
+        }
     }
 
     suspend fun saveGoals(goals: String) {
