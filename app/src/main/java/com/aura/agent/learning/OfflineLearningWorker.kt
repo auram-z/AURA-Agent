@@ -72,13 +72,21 @@ class OfflineLearningWorker(
                             val lines = job.payload.lines()
                             val title = lines.firstOrNull()?.take(80)?.ifBlank { "آفلاین" } ?: "آفلاین"
                             val content = lines.drop(1).joinToString("\n").ifBlank { job.payload }
+                            val now = System.currentTimeMillis()
+                            val lang = if (content.any { it in '\u0600'..'\u06FF' }) "fa" else "en"
                             knowledgeStore.add(
                                 KnowledgeStore.KnowledgeChunk(
                                     id = UUID.randomUUID().toString(),
                                     title = title,
                                     content = content.take(500),
                                     source = "offline_queue",
-                                    tags = listOf("offline")
+                                    language = lang,
+                                    tags = listOf("offline"),
+                                    confidence = 0.45f,
+                                    claims = listOf(KnowledgeStore.Claim(content.take(200))),
+                                    timestamp = now,
+                                    lastVerifiedAt = now,
+                                    receivedAt = now
                                 )
                             )
                             queue.markDone(job.id)
