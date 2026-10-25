@@ -36,7 +36,11 @@ CONTENT: <متن دانش>
         )
     }
 
-    data class ExtractedItem(val title: String, val content: String)
+    data class ExtractedItem(
+        val title: String,
+        val content: String,
+        val language: String = "fa"
+    )
 
     suspend fun extractFromConversation(
         userMessage: ChatMessage,
@@ -75,7 +79,6 @@ CONTENT: <متن دانش>
             lower.contains("یادت باشه") || lower.contains("به خاطر بسپار")
         if (!looksFactual) return emptyList()
 
-        // از دستورات ذخیره جدا کن
         val cleaned = text
             .replace(Regex("(?i)(یادت باشه|به خاطر بسپار|یاد بگیر|remember)[:：]?\\s*"), "")
             .trim()
@@ -87,7 +90,8 @@ CONTENT: <متن دانش>
             lower.contains("هدف") -> "هدف کاربر"
             else -> "نکته مکالمه"
         }
-        return listOf(ExtractedItem(title, cleaned.take(400)))
+        val lang = if (cleaned.any { it in '\u0600'..'\u06FF' }) "fa" else "en"
+        return listOf(ExtractedItem(title, cleaned.take(400), lang))
     }
 
     private fun parse(raw: String): List<ExtractedItem> {
@@ -100,20 +104,37 @@ CONTENT: <متن دانش>
             val content = Regex("CONTENT:\\s*(.+)", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
                 .find(block)?.groupValues?.getOrNull(1)?.trim()
             if (!title.isNullOrBlank() && !content.isNullOrBlank()) {
-                items.add(ExtractedItem(title.take(80), content.take(500))
-                )
+                val lang = if (content.any { it in '\u0600'..'\u06FF' }) "fa" else "en"
+                items.add(ExtractedItem(title.take(80), content.take(500), lang))
             }
         }
         if (items.isEmpty() && raw.length in 20..400 && !raw.contains("NONE", ignoreCase = true)) {
-            items.add(ExtractedItem("دانش استخراج‌شده", raw.take(400)))
+            val lang = if (raw.any { it in '\u0600'..'\u06FF' }) "fa" else "en"
+            items.add(ExtractedItem("دانش استخراج‌شده", raw.take(400), lang))
         }
         return items.take(3)
     }
 
-    fun toChunk(item: ExtractedItem) = KnowledgeStore.KnowledgeChunk(
-        id = UUID.randomUUID().toString(),
-        title = item.title,
-        content = item.content,
-        source = "llm_extract"
-    )
+    /** تبدیل به KnowledgeChunk کامل با فیلدهای نسخه ۲ */
+    fun toChunk(
+        item: ExtractedItem,
+        source: String = "llm_extract",
+        confidence: Float = 0.55f
+    ): KnowledgeStore.KnowledgeChunk {
+        val now = System.currentTimeMillis()
+        return KnowledgeStore.KnowledgeChunk(
+            id = UUID.randomUUID().toString(),
+            title = item.title,
+            content = item.content,
+            source = source,
+            sourceUrl = "",
+            language = item.language,
+            tags = listOf("extracted"),
+            confidence = confidence.coerceIn(0.1f, 0.95f),
+            claims = listOf(KnowledgeStore.Claim(item.content.take(220))),
+            timestamp = now,
+            lastVerifiedAt = now,
+            receivedAt = now
+        )
+    }
 }
