@@ -4,7 +4,7 @@
 
 > *"At your service."*
 
-**نسخه: 3.0.0-core**
+**نسخه: 3.1.0-knowledge**
 
 ---
 
@@ -14,12 +14,25 @@
 |-----|--------|
 | 🔒 بدون وابستگی اجباری به API خارجی | ✅ Local Core |
 | 📡 آنلاین + آفلاین | ✅ |
-| 💾 حافظه بلندمدت + پایگاه دانش | ✅ |
+| 💾 حافظه بلندمدت + پایگاه دانش | ✅ Knowledge 2.0 |
 | 📈 یادگیری و بازخورد | ✅ |
+| 🌐 چندزبانه + ارزیابی اعتبار | ✅ |
+| 🔄 یادگیری مستمر هوشمند | ✅ ContinuousLearner |
 | 📱 اندروید + وب (iOS در نقشه راه) | ✅ / 🗺️ |
 | ⚙️ تشخیص سخت‌افزار و مسیریابی اجرا | ✅ |
 
-جزئیات: [`docs/core-architecture.md`](docs/core-architecture.md)
+جزئیات هسته: [`docs/core-architecture.md`](docs/core-architecture.md)  
+جزئیات دانش: [`docs/knowledge-architecture.md`](docs/knowledge-architecture.md)
+
+---
+
+## Knowledge 2.0 (جدید)
+
+- **KnowledgeChunk** با فیلدهای `confidence`، `language`، `sourceUrl`، `claims`، `lastVerifiedAt`
+- **CredibilityScorer** — امتیازدهی اعتبار منبع و تازگی
+- **ContradictionDetector** — تشخیص تناقض بین ادعاها
+- **WebSearchService** چندزبانه (فارسی / انگلیسی / عربی)
+- **ContinuousLearner** — به‌روزرسانی دوره‌ای هوشمند موضوعات مرتبط
 
 ---
 
