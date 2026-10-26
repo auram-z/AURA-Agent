@@ -15,20 +15,19 @@ android {
         applicationId = "com.aura.agent"
         minSdk = 26
         targetSdk = 35
-        versionCode = 11
-        versionName = "3.0.1-core"
+        versionCode = 12
+        versionName = "3.2.0-super-independent"
 
-        // خواندن امن local.properties بدون API داخلی AGP
+        // فقط مقادیر غیرحساس در BuildConfig. کلید API هرگز داخل APK پخته نمی‌شود.
         val localProps = Properties()
         val localFile = rootProject.file("local.properties")
         if (localFile.exists()) {
             localFile.inputStream().use { localProps.load(it) }
         }
-        val apiKey = localProps.getProperty("AURA_API_KEY", "")
         val baseUrl = localProps.getProperty("AURA_BASE_URL", "https://api.x.ai/v1")
         val model = localProps.getProperty("AURA_MODEL", "grok-4.7")
 
-        buildConfigField("String", "AURA_API_KEY", "\"${apiKey.replace("\"", "\\\"")}\"")
+        // کلید API را اینجا قرار ندهید — فقط از SecureStore در زمان اجرا خوانده شود.
         buildConfigField("String", "AURA_BASE_URL", "\"${baseUrl.replace("\"", "\\\"")}\"")
         buildConfigField("String", "AURA_MODEL", "\"${model.replace("\"", "\\\"")}\"")
 

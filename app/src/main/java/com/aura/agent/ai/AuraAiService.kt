@@ -1,8 +1,10 @@
 package com.aura.agent.ai
 
+import android.content.Context
 import com.aura.agent.BuildConfig
 import com.aura.agent.data.ChatMessage
 import com.aura.agent.data.MessageRole
+import com.aura.agent.security.SecureStore
 import com.aura.agent.security.SecurityGuards
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -16,7 +18,12 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.TimeUnit
 
+/**
+ * سرویس تماس با API ابری.
+ * کلید API فقط از SecureStore (زمان اجرا) خوانده می‌شود و هرگز داخل APK پخته نمی‌شود.
+ */
 class AuraAiService(
+    private val context: Context? = null,
     private val apiKeyOverride: String? = null,
     private val baseUrlOverride: String? = null,
     /** اگر null باشد از ModelConfig / BuildConfig خوانده می‌شود */
@@ -40,6 +47,25 @@ class AuraAiService(
         modelOverride = model
     }
 
+    private fun resolveApiKey(): String {
+        // اولویت: override صریح → SecureStore → خالی
+        apiKeyOverride?.takeIf { it.isNotBlank() }?.let { return it }
+        context?.let { ctx ->
+            val store = SecureStore(ctx)
+            store.getString(SecureStore.KEY_API_OVERRIDE).takeIf { it.isNotBlank() }?.let { return it }
+        }
+        return ""
+    }
+
+    private fun resolveBaseUrl(): String {
+        baseUrlOverride?.takeIf { it.isNotBlank() }?.let { return it }
+        context?.let { ctx ->
+            val store = SecureStore(ctx)
+            store.getString(SecureStore.KEY_BASE_URL).takeIf { it.isNotBlank() }?.let { return it }
+        }
+        return BuildConfig.AURA_BASE_URL
+    }
+
     private val systemPrompt = """
 شما AURA هستید — هوش مصنوعی همه‌کاره در سطح دستیارهای پیشرفته (Grok / ChatGPT / Gemini).
 
@@ -60,14 +86,14 @@ class AuraAiService(
         modelName: String? = null
     ): Result<String> = withContext(Dispatchers.IO) {
         try {
-            val apiKey = (apiKeyOverride?.takeIf { it.isNotBlank() } ?: BuildConfig.AURA_API_KEY)
+            val apiKey = resolveApiKey()
             if (apiKey.isBlank()) {
                 return@withContext Result.failure(
-                    Exception("کلید API تنظیم نشده. AURA_API_KEY را در local.properties قرار دهید.")
+                    Exception("کلید API تنظیم نشده. کلید را از داخل اپ (تنظیمات امن) وارد کنید.")
                 )
             }
 
-            val rawBase = baseUrlOverride?.takeIf { it.isNotBlank() } ?: BuildConfig.AURA_BASE_URL
+            val rawBase = resolveBaseUrl()
             val base = SecurityGuards.requireHttps(rawBase).getOrElse {
                 return@withContext Result.failure(it)
             }

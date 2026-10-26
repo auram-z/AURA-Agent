@@ -31,7 +31,7 @@ class AuraCore(
 
     companion object {
         private const val TAG = "AuraCore"
-        const val CORE_VERSION = "3.2-super-independent"
+        const val CORE_VERSION = "3.2.0-super-independent"
     }
 
     private val hardware = HardwareProfiler(context)

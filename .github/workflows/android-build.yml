@@ -31,7 +31,7 @@ jobs:
       - name: Create local.properties stub
         run: |
           echo "sdk.dir=${ANDROID_HOME:-$ANDROID_SDK_ROOT}" > local.properties
-          echo "AURA_API_KEY=" >> local.properties
+          # کلید API عمداً خالی است — نباید داخل APK پخته شود
           echo "AURA_BASE_URL=https://api.x.ai/v1" >> local.properties
           echo "AURA_MODEL=grok-4.7" >> local.properties
 
@@ -56,9 +56,9 @@ jobs:
       - name: Run unit tests
         run: |
           if [ -f ./gradlew ]; then
-            ./gradlew :app:testDebugUnitTest --stacktrace --no-daemon || true
+            ./gradlew :app:testDebugUnitTest --stacktrace --no-daemon
           else
-            gradle :app:testDebugUnitTest --stacktrace --no-daemon || true
+            gradle :app:testDebugUnitTest --stacktrace --no-daemon
           fi
 
       - name: Upload APK
