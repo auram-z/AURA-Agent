@@ -7,16 +7,12 @@ import android.net.Uri
 import android.util.Base64
 import android.util.Log
 import com.aura.agent.BuildConfig
+import com.aura.agent.security.SecureStore
 import com.aura.agent.security.SecurityGuards
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -27,10 +23,6 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.TimeUnit
 
-/**
- * استخراج متن از عکس (OCR / Vision) سپس آماده‌سازی برای ترجمه به فارسی.
- * از مدل vision در صورت پشتیبانی API استفاده می‌کند؛ در غیر این صورت راهنما برمی‌گرداند.
- */
 class ImageTextExtractor(private val context: Context) {
 
     companion object {
@@ -89,13 +81,12 @@ class ImageTextExtractor(private val context: Context) {
     }
 
     private fun visionExtract(base64Jpeg: String): Result<String> {
-        val apiKey = BuildConfig.AURA_API_KEY
-        if (apiKey.isBlank()) return Result.failure(Exception("AURA_API_KEY تنظیم نشده"))
+        val apiKey = SecureStore(context).getString(SecureStore.KEY_API_OVERRIDE)
+        if (apiKey.isBlank()) return Result.failure(Exception("کلید API تنظیم نشده"))
         val base = SecurityGuards.requireHttps(BuildConfig.AURA_BASE_URL).getOrElse {
             return Result.failure(it)
         }
 
-        // محتوای چندرسانه‌ای به سبک OpenAI-compatible
         val userContent = buildJsonArray {
             add(buildJsonObject {
                 put("type", "text")
@@ -137,15 +128,14 @@ class ImageTextExtractor(private val context: Context) {
             client.newCall(request).execute().use { response ->
                 val raw = response.body?.string().orEmpty()
                 if (!response.isSuccessful) {
-                    // fallback: مدل vision ندارد
                     if (response.code == 400 || response.code == 422) {
                         return Result.success(
-                            "[مدل فعلی vision را پشتیبانی نمی‌کند. متن را کپی کنید یا مدل بینایی تنظیم کنید.]\n$raw".take(300)
+                            "[مدل فعلی vision را پشتیبانی نمی‌کند. متن را کپی کنید یا مدل بینایی تنظیم کنید.]\n${raw.take(200)}"
                         )
                     }
-                    return Result.failure(Exception("خطای Vision API (${response.code})")
+                    return Result.failure(Exception("خطای Vision API (${response.code})"))
                 }
-                val content = Regex("\"content\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\"")
+                val content = Regex(""""content"\s*:\s*"((?:\\.|[^"\\])*)"""")
                     .find(raw)?.groupValues?.getOrNull(1)
                     ?.replace("\\n", "\n")
                     ?.replace("\\\"", "\"")

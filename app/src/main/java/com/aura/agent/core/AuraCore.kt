@@ -7,25 +7,17 @@ import com.aura.agent.ai.ModelConfig
 import com.aura.agent.data.ChatMessage
 import com.aura.agent.data.MemoryStore
 import com.aura.agent.learning.KnowledgeStore
+import com.aura.agent.security.SecureStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 
-/**
- * هسته فوق‌هوشمند مستقل AURA.
- *
- * اصول:
- * - بدون وابستگی اجباری به API خارجی
- * - مسیریابی هوشمند بر اساس سیاست، سخت‌افزار و پیچیدگی
- * - دانش با سطح اطمینان + تشخیص تناقض در لایه Local
- * - آنلاین فقط اختیاری و تحت کنترل کاربر
- */
 class AuraCore(
     context: Context,
     private val memoryStore: MemoryStore,
     private val knowledgeStore: KnowledgeStore,
-    private val aiService: AuraAiService = AuraAiService(),
+    private val aiService: AuraAiService = AuraAiService(context = context),
     private val modelConfig: ModelConfig = ModelConfig(context)
 ) {
 
@@ -35,13 +27,15 @@ class AuraCore(
     }
 
     private val hardware = HardwareProfiler(context)
+    private val secureStore = SecureStore(context)
 
     private val local = LocalKnowledgeBackend(memoryStore, knowledgeStore)
     private val onDevice = OnDeviceBackend()
     private val remote = RemoteApiBackend(
         aiService = aiService,
         modelProvider = { modelConfig.getActiveModel() },
-        onlineProvider = { hardware.profile().online }
+        onlineProvider = { hardware.profile().online },
+        keyAvailable = { secureStore.getString(SecureStore.KEY_API_OVERRIDE).isNotBlank() }
     )
 
     private val _policy = MutableStateFlow(RuntimePolicy.HYBRID)
@@ -74,10 +68,6 @@ class AuraCore(
         }
     }
 
-    /**
-     * مسیریابی هوشمند بر اساس سیاست + سخت‌افزار + پیچیدگی سؤال.
-     * هسته محلی همیشه در دسترس است و در صورت اطمینان پایین به لایه بالاتر می‌رود.
-     */
     suspend fun infer(
         history: List<ChatMessage>,
         userText: String,
@@ -105,12 +95,10 @@ class AuraCore(
             result.onSuccess { resp ->
                 if (kind == BackendKind.LOCAL) {
                     bestLocal = resp
-                    // اگر اطمینان محلی کافی بود، همان را برگردان
                     if (resp.confidence >= 0.7f || policy == RuntimePolicy.LOCAL_ONLY) {
                         _lastBackend.value = resp.backend
                         return resp
                     }
-                    // در غیر این صورت سعی کن لایه بالاتر
                     return@onSuccess
                 }
                 _lastBackend.value = resp.backend
@@ -118,7 +106,6 @@ class AuraCore(
             }.onFailure { lastError = it }
         }
 
-        // بهترین پاسخ محلی یا fallback
         bestLocal?.let {
             _lastBackend.value = BackendKind.LOCAL
             return it
@@ -141,18 +128,12 @@ class AuraCore(
         profile: HardwareProfiler.Profile,
         userText: String
     ): List<BackendKind> {
-        val complex = userText.length > 80 ||
-            userText.contains("؟") || userText.contains("?") ||
-            listOf("چرا", "چگونه", "توضیح", "کد", "تحلیل", "why", "how", "explain", "code")
-                .any { userText.lowercase().contains(it) }
-
         return when (policy) {
             RuntimePolicy.LOCAL_ONLY -> listOf(
                 BackendKind.ON_DEVICE,
                 BackendKind.LOCAL
             )
             RuntimePolicy.HYBRID -> buildList {
-                // اول محلی مستقل — اگر کافی نبود بعداً remote
                 add(BackendKind.LOCAL)
                 if (profile.canRunHeavyOnDevice && onDevice.isAvailable()) add(BackendKind.ON_DEVICE)
                 if (profile.online) add(BackendKind.REMOTE)

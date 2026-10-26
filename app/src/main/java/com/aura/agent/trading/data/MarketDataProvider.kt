@@ -30,7 +30,6 @@ data class MarketQuote(
 
 class MarketDataProvider {
 
-    // اتصال پایدار به شبکه جهانی — تایم‌اوت بلند + retry
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(45, TimeUnit.SECONDS)
@@ -90,7 +89,11 @@ class MarketDataProvider {
         }
     }
 
-    private suspend fun <T> fetchWithRetry(times: Int = 3, blockMs: Long = 800, block: () -> T?): T? {
+    private suspend fun <T> fetchWithRetry(
+        times: Int = 3,
+        delayMs: Long = 800L,
+        block: () -> T?
+    ): T? {
         var last: T? = null
         repeat(times) { attempt ->
             try {

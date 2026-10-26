@@ -4,7 +4,6 @@ import android.util.Log
 
 /**
  * تولید اسکلت کد Kotlin بر اساس EvolutionPlan.
- * فاز E2: templateمحور، بدون وابستگی اجباری به Remote.
  */
 class CodeGenerator(
     private val safety: SafetyPolicy = SafetyPolicy()
@@ -93,13 +92,13 @@ class CodeGenerator(
             "media" -> """
     fun processMediaHint(kind: String = "text"): String {
         if (!enabled) return "غیرفعال"
-        return "آماده پردازش رسانه ($kind) — اسکلت E2"
+        return "آماده پردازش رسانه (${'$'}kind) — اسکلت E2"
     }
 """
             "trading" -> """
     fun paperSignalHint(symbol: String = "BTC"): String {
         if (!enabled) return "غیرفعال"
-        return "سیگنال کاغذی برای $symbol — فقط شبیه‌سازی، بدون LIVE"
+        return "سیگنال کاغذی برای ${'$'}symbol — فقط شبیه‌سازی، بدون LIVE"
     }
 """
             "voice" -> """
@@ -123,9 +122,6 @@ package $packageName
  * ریسک: ${capability.estimatedRisk}
  * دلیل: $rationale
  * ماژول: $module
- *
- * اسکلت امن — منطق دامنه را در چرخه‌های بعدی تکمیل کنید.
- * بدون شبکه ناامن، بدون Runtime.exec، بدون دسترسی به security/.
  */
 object $className {
 
