@@ -1,6 +1,8 @@
 package com.aura.agent.media
 
+import android.content.Context
 import com.aura.agent.BuildConfig
+import com.aura.agent.security.SecureStore
 import com.aura.agent.security.SecurityGuards
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -17,7 +19,7 @@ import java.util.concurrent.TimeUnit
 /**
  * ترجمه خودکار هر زبانی → فارسی با مدل AURA (xAI).
  */
-class TranslateService {
+class TranslateService(private val context: Context? = null) {
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(45, TimeUnit.SECONDS)
@@ -27,15 +29,23 @@ class TranslateService {
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
+    private fun resolveApiKey(): String {
+        context?.let {
+            val k = SecureStore(it).getString(SecureStore.KEY_API_OVERRIDE)
+            if (k.isNotBlank()) return k
+        }
+        return ""
+    }
+
     suspend fun toPersian(
         text: String,
         sourceHint: String? = null
     ): Result<String> = withContext(Dispatchers.IO) {
         if (text.isBlank()) return@withContext Result.failure(Exception("متن خالی است"))
         try {
-            val apiKey = BuildConfig.AURA_API_KEY
+            val apiKey = resolveApiKey()
             if (apiKey.isBlank()) {
-                return@withContext Result.failure(Exception("AURA_API_KEY تنظیم نشده"))
+                return@withContext Result.failure(Exception("کلید API تنظیم نشده"))
             }
             val base = SecurityGuards.requireHttps(BuildConfig.AURA_BASE_URL).getOrElse {
                 return@withContext Result.failure(it)
@@ -97,7 +107,7 @@ class TranslateService {
             ).getOrElse { return@withContext Result.failure(it) }
 
             val map = mutableMapOf<Int, String>()
-            Regex("\\[(\\d+)\\]\\s*(.+)").findAll(translated).forEach { m ->
+            Regex("""\[(\d+)\]\s*(.+)""").findAll(translated).forEach { m ->
                 val idx = m.groupValues[1].toIntOrNull() ?: return@forEach
                 map[idx] = m.groupValues[2].trim()
             }

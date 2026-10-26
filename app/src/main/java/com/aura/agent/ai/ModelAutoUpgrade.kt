@@ -1,7 +1,9 @@
 package com.aura.agent.ai
 
+import android.content.Context
 import android.util.Log
 import com.aura.agent.BuildConfig
+import com.aura.agent.security.SecureStore
 import com.aura.agent.security.SecurityGuards
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -15,15 +17,14 @@ import java.util.concurrent.TimeUnit
  * کشف مدل‌های موجود از API xAI و ارتقای خودکار به بهترین/جدیدترین.
  */
 class ModelAutoUpgrade(
-    private val modelConfig: ModelConfig
+    private val modelConfig: ModelConfig,
+    private val context: Context? = null
 ) {
 
     companion object {
         private const val TAG = "AuraModelUpgrade"
-        /** حداقل فاصله بین چک خودکار (۱۲ ساعت) */
         const val CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000L
 
-        /** اولویت پرچمداران (بالاتر = جدیدتر) */
         private val PREFERRED_ORDER = listOf(
             "grok-4.7",
             "grok-4-latest",
@@ -51,14 +52,19 @@ class ModelAutoUpgrade(
         val message: String
     )
 
-    /**
-     * لیست مدل‌ها از GET /v1/models
-     */
+    private fun resolveApiKey(): String {
+        context?.let { ctx ->
+            val k = SecureStore(ctx).getString(SecureStore.KEY_API_OVERRIDE)
+            if (k.isNotBlank()) return k
+        }
+        return ""
+    }
+
     suspend fun listRemoteModels(): Result<List<String>> = withContext(Dispatchers.IO) {
         try {
-            val apiKey = BuildConfig.AURA_API_KEY
+            val apiKey = resolveApiKey()
             if (apiKey.isBlank()) {
-                return@withContext Result.failure(Exception("AURA_API_KEY تنظیم نشده"))
+                return@withContext Result.failure(Exception("کلید API تنظیم نشده (SecureStore)"))
             }
             val base = SecurityGuards.requireHttps(BuildConfig.AURA_BASE_URL).getOrElse {
                 return@withContext Result.failure(it)
@@ -83,35 +89,26 @@ class ModelAutoUpgrade(
         }
     }
 
-    /**
-     * انتخاب بهترین مدل از لیست موجود بر اساس اولویت پرچمدار.
-     */
     fun pickBest(available: List<String>): String? {
         if (available.isEmpty()) return null
-        // دقیق
         for (pref in PREFERRED_ORDER) {
             if (available.any { it.equals(pref, ignoreCase = true) }) {
                 return available.first { it.equals(pref, ignoreCase = true) }
             }
         }
-        // شروع با grok-4.
         available.filter { it.startsWith("grok-4", ignoreCase = true) }
             .maxWithOrNull(compareBy({ versionKey(it) }, { it }))
             ?.let { return it }
-        // هر grok
         return available.filter { it.startsWith("grok", ignoreCase = true) }
             .maxWithOrNull(compareBy({ versionKey(it) }, { it }))
             ?: available.firstOrNull()
     }
 
     private fun versionKey(id: String): Double {
-        val m = Regex("grok-?(\d+(?:\\.\\d+)?)", RegexOption.IGNORE_CASE).find(id)
+        val m = Regex("""grok-?(\d+(?:\.\d+)?)""", RegexOption.IGNORE_CASE).find(id)
         return m?.groupValues?.getOrNull(1)?.toDoubleOrNull() ?: 0.0
     }
 
-    /**
-     * چک و در صورت فعال بودن auto-upgrade، مدل را به‌روز کن.
-     */
     suspend fun checkAndUpgrade(force: Boolean = false): UpgradeResult {
         val previous = modelConfig.getActiveModel()
         val auto = modelConfig.isAutoUpgradeEnabled()
@@ -134,7 +131,6 @@ class ModelAutoUpgrade(
         }
 
         val remote = listRemoteModels().getOrElse { err ->
-            // آفلاین: حداقل به FLAGSHIP_DEFAULT ارتقا بده اگر هنوز grok-beta است
             if (previous == "grok-beta" || previous.isBlank()) {
                 modelConfig.setActiveModel(ModelConfig.FLAGSHIP_DEFAULT)
                 return UpgradeResult(
