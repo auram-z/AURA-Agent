@@ -90,6 +90,7 @@ class MainActivity : ComponentActivity() {
         when (intent?.action) {
             Intent.ACTION_SEND -> {
                 if (intent.type?.startsWith("image/") == true) {
+                    @Suppress("DEPRECATION")
                     pendingShareUri = intent.getParcelableExtra(Intent.EXTRA_STREAM)
                 } else if (intent.type?.startsWith("text/") == true) {
                     pendingShareText = intent.getStringExtra(Intent.EXTRA_TEXT)
@@ -144,7 +145,11 @@ fun AuraChatScreen(
                 title = {
                     Column {
                         Text("AURA", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color(0xFF38BDF8))
-                        Text("ترجمه · زیرنویس · v2.5", fontSize = 12.sp, color = Color(0xFF94A3B8))
+                        Text(
+                            "v3.2 · مستقل · ترجمه · معامله Paper",
+                            fontSize = 12.sp,
+                            color = Color(0xFF94A3B8)
+                        )
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF0F172A).copy(alpha = 0.9f))
@@ -187,7 +192,6 @@ fun AuraChatScreen(
                     )
                 }
                 Spacer(Modifier.width(6.dp))
-                // دکمه ترجمه عکس
                 FloatingActionButton(
                     onClick = { imagePicker.launch("image/*") },
                     containerColor = Color(0xFF334155),
@@ -205,7 +209,7 @@ fun AuraChatScreen(
                     placeholder = {
                         Text(
                             if (uiState.isListening) "در حال شنیدن..."
-                            else "ترجمه / زیرنویس / چت...",
+                            else "چت · ترجمه · اسکن کریپتو · وضعیت...",
                             color = Color(0xFF64748B),
                             fontSize = 13.sp
                         )
@@ -290,11 +294,22 @@ fun WelcomeMessage() {
     Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Text("🌌", fontSize = 48.sp)
         Spacer(Modifier.height(16.dp))
-        Text("سلام، من AURA هستم", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color(0xFF38BDF8), textAlign = TextAlign.Center)
+        Text(
+            "سلام، من AURA هستم",
+            fontSize = 22.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color(0xFF38BDF8),
+            textAlign = TextAlign.Center
+        )
         Spacer(Modifier.height(8.dp))
         Text(
-            "ترجمه و زیرنویس خودکار به فارسی\n📷 عکس · متن · SRT\nAt your service.",
-            fontSize = 15.sp, color = Color(0xFF94A3B8), textAlign = TextAlign.Center, lineHeight = 22.sp
+            "هوشمند مستقل · ترجمه · زیرنویس · Paper Trading\n" +
+                "اسکن کریپتو · بک‌تست · تکامل خودکار\n" +
+                "At your service.",
+            fontSize = 15.sp,
+            color = Color(0xFF94A3B8),
+            textAlign = TextAlign.Center,
+            lineHeight = 22.sp
         )
     }
 }
@@ -315,8 +330,10 @@ fun MessageBubble(
             verticalAlignment = Alignment.Top
         ) {
             if (!isUser) {
-                Icon(Icons.Default.SmartToy, null, tint = Color(0xFF38BDF8),
-                    modifier = Modifier.padding(end = 8.dp, top = 4.dp).size(28.dp))
+                Icon(
+                    Icons.Default.SmartToy, null, tint = Color(0xFF38BDF8),
+                    modifier = Modifier.padding(end = 8.dp, top = 4.dp).size(28.dp)
+                )
             }
             Surface(
                 shape = RoundedCornerShape(
@@ -327,16 +344,23 @@ fun MessageBubble(
                 color = if (isUser) Color(0xFF0EA5E9) else Color(0xFF1E293B),
                 modifier = Modifier.widthIn(max = 300.dp)
             ) {
-                Text(message.content, color = Color.White, fontSize = 15.sp,
-                    modifier = Modifier.padding(12.dp), lineHeight = 22.sp)
+                Text(
+                    message.content, color = Color.White, fontSize = 15.sp,
+                    modifier = Modifier.padding(12.dp), lineHeight = 22.sp
+                )
             }
             if (isUser) {
-                Icon(Icons.Default.Person, null, tint = Color(0xFF94A3B8),
-                    modifier = Modifier.padding(start = 8.dp, top = 4.dp).size(28.dp))
+                Icon(
+                    Icons.Default.Person, null, tint = Color(0xFF94A3B8),
+                    modifier = Modifier.padding(start = 8.dp, top = 4.dp).size(28.dp)
+                )
             }
         }
         if (!isUser) {
-            Row(Modifier.padding(start = 36.dp, top = 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(
+                Modifier.padding(start = 36.dp, top = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
                 IconButton(onClick = onThumbsUp, modifier = Modifier.size(32.dp)) {
                     Icon(
                         if (message.feedback == MessageFeedback.THUMBS_UP) Icons.Filled.ThumbUp else Icons.Outlined.ThumbUp,
@@ -364,8 +388,10 @@ fun TypingIndicator() {
         Icon(Icons.Default.SmartToy, null, tint = Color(0xFF38BDF8), modifier = Modifier.size(28.dp))
         Spacer(Modifier.width(8.dp))
         Surface(shape = RoundedCornerShape(16.dp), color = Color(0xFF1E293B)) {
-            Text("AURA در حال کار...", color = Color(0xFF94A3B8),
-                fontSize = 14.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
+            Text(
+                "AURA در حال کار...", color = Color(0xFF94A3B8),
+                fontSize = 14.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+            )
         }
     }
 }

@@ -39,7 +39,8 @@ import kotlinx.coroutines.launch
 class AuraViewModel(application: Application) : AndroidViewModel(application) {
 
     private val modelConfig = ModelConfig(application)
-    private val modelUpgrade = ModelAutoUpgrade(modelConfig)
+    // Context لازم است تا ModelAutoUpgrade کلید را از SecureStore بخواند
+    private val modelUpgrade = ModelAutoUpgrade(modelConfig, application)
     // کلید API فقط از SecureStore خوانده می‌شود — هیچ کلیدی در APK نیست
     private val aiService = AuraAiService(context = application)
     private val agent = AgentOrchestrator(aiService)
@@ -178,11 +179,17 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
+        // ابزارها (معامله، شبکه، باتری، بک‌تست، ...) — مسیر suspend
+        val toolJob = detectToolJob(text)
+        if (toolJob != null) {
+            enqueueAsync(text) { toolJob() }
+            return
+        }
+
         val forceSearch = text.lowercase().let {
             it.startsWith("جستجو") || it.startsWith("سرچ") || it.startsWith("search") ||
                 it.contains("جستجو کن")
         }
-        val toolResult = detectAndRunTool(text)
         val userMessage = ChatMessage(role = MessageRole.USER, content = text)
 
         _uiState.update {
@@ -201,7 +208,6 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                 if (learned.isNotBlank()) append("\n\n=== حافظه ===\n$learned")
                 val promptAddon = evolutionEngine.promptAddon()
                 if (promptAddon.isNotBlank()) append("\n\n$promptAddon")
-                if (toolResult != null) append("\n\nنتیجه ابزار:\n$toolResult")
             }
 
             val policy = auraCore.policy.value
@@ -217,10 +223,7 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                     forceSearch = forceSearch,
                     modelName = model
                 )
-                var reply = agentResult.reply
-                if (toolResult != null && reply.length < 40) reply = toolResult
-                else if (toolResult != null) reply = "$toolResult\n\n$reply"
-                reply
+                agentResult.reply
             } else {
                 val coreResp = auraCore.infer(
                     history = _uiState.value.messages,
@@ -228,8 +231,6 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                     systemContext = baseContext
                 )
                 var reply = coreResp.text
-                if (toolResult != null && reply.length < 40) reply = toolResult
-                else if (toolResult != null) reply = "$toolResult\n\n$reply"
                 if (coreResp.backend != BackendKind.REMOTE) {
                     reply += "\n\n— ${coreResp.backend.name}" +
                         if (coreResp.offline) " · آفلاین" else ""
@@ -252,7 +253,11 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(messages = it.messages + userMessage, isLoading = true, error = null)
         }
         viewModelScope.launch {
-            val reply = block()
+            val reply = try {
+                block()
+            } catch (e: Exception) {
+                "❌ خطا: ${e.message ?: e.javaClass.simpleName}"
+            }
             _uiState.update {
                 it.copy(
                     messages = it.messages + ChatMessage(role = MessageRole.ASSISTANT, content = reply),
@@ -420,17 +425,85 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         when {
             isSubCmd && text.length < 15 -> return { mediaTranslate.helpText() }
             isSubCmd -> {
-                val payload = text.replace(Regex("(?i)زیرنویس\\s*(فارسی)?[:：]?"), "").trim()
+                val payload = text.replace(Regex("""(?i)زیرنویس\s*(فارسی)?[:：]?"""), "").trim()
                 if (payload.length < 3) return { mediaTranslate.helpText() }
                 return { mediaTranslate.translateSubtitles(payload) }
             }
             isTranslateCmd -> {
-                val payload = text.replace(Regex("(?i)ترجمه\\s*(کن)?\\s*(به\\s*فارسی)?[:：]?"), "").trim()
+                val payload = text.replace(Regex("""(?i)ترجمه\s*(کن)?\s*(به\s*فارسی)?[:：]?"""), "").trim()
                 if (payload.length < 2) return { mediaTranslate.helpText() }
                 return { "🇮🇷 ${mediaTranslate.translateText(payload)}" }
             }
         }
         return null
+    }
+
+    /**
+     * تشخیص و اجرای ابزارهای AuraTools از روی متن کاربر.
+     * قبلاً placeholder بود و همیشه null برمی‌گرداند — ابزارها عملاً مرده بودند.
+     */
+    private fun detectToolJob(text: String): (suspend () -> String)? {
+        val lower = text.lowercase().trim()
+
+        return when {
+            // زمان / باتری / دستگاه / شبکه
+            lower.contains("ساعت") || lower.contains("زمان") || lower == "time" ->
+                { tools.getCurrentTime() }
+            lower.contains("باتری") || lower.contains("battery") ->
+                { tools.getBatteryInfo() }
+            lower.contains("اطلاعات دستگاه") || lower.contains("device info") ->
+                { tools.getDeviceInfo() }
+            lower.contains("وضعیت شبکه") || lower.contains("اینترنت") || lower.contains("network") ->
+                { tools.networkStatus() }
+
+            // پورتفو / وضعیت معامله
+            lower.contains("وضعیت معامله") || lower.contains("پورتفو") || lower.contains("trading status") ||
+            lower == "وضعیت" && lower.length < 12 ->
+                { tools.tradingStatus() }
+
+            // اسکن بازار
+            lower.contains("اسکن کریپتو") || lower.contains("scan crypto") || lower == "کریپتو" ->
+                { tools.scanCrypto() }
+            lower.contains("اسکن بورس") || lower.contains("scan iran") || lower.contains("بورس") ->
+                { tools.scanIranStock() }
+
+            // معامله خودکار / کیل‌سوییچ
+            (lower.contains("معامله خودکار") || lower.contains("auto trading")) &&
+                (lower.contains("روشن") || lower.contains("فعال") || lower.contains("on")) ->
+                { tools.enableAutoTrading() }
+            (lower.contains("معامله خودکار") || lower.contains("auto trading")) &&
+                (lower.contains("خاموش") || lower.contains("off")) ->
+                { tools.disableAutoTrading() }
+            lower.contains("کیل سوییچ") || lower.contains("kill switch") || lower.contains("توقف اضطراری") ->
+                { tools.killSwitch("دستور کاربر") }
+            lower.contains("رفع کیل") || lower.contains("release kill") ->
+                { tools.releaseKillSwitch() }
+
+            // بک‌تست
+            lower.contains("بک‌تست کریپتو") || lower.contains("backtest crypto") ->
+                { tools.backtestCrypto() }
+            lower.contains("بک‌تست بورس") || lower.contains("backtest iran") ->
+                { tools.backtestIran() }
+            lower.startsWith("بک‌تست ") || lower.startsWith("backtest ") -> {
+                val ticker = text.substringAfter("بک‌تست").substringAfter("backtest").trim()
+                    .uppercase().replace("/", "").ifBlank { "BTC" }
+                { tools.backtestCryptoSymbol(ticker) }
+            }
+
+            // خرید / فروش دستی (Paper)
+            lower.startsWith("خرید ") || lower.startsWith("buy ") -> {
+                val ticker = text.removePrefix("خرید").removePrefix("buy").trim()
+                    .uppercase().replace("/", "").ifBlank { return null }
+                { tools.buy(ticker) }
+            }
+            lower.startsWith("فروش ") || lower.startsWith("sell ") -> {
+                val ticker = text.removePrefix("فروش").removePrefix("sell").trim()
+                    .uppercase().replace("/", "").ifBlank { return null }
+                { tools.sell(ticker) }
+            }
+
+            else -> null
+        }
     }
 
     fun rateMessage(messageId: String, thumbsUp: Boolean) {
@@ -442,24 +515,10 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                 if (it.id == messageId) it.copy(feedback = fb) else it
             })
         }
-        learningManager.submitThumbs(messageId, thumbsUp, msg.content)
-    }
-
-    fun setAutoLearn(enabled: Boolean) {
-        learningManager.setAutoLearn(enabled)
-        _uiState.update { it.copy(autoLearnEnabled = enabled) }
-    }
-
-    fun prepareTrainingData() {
         viewModelScope.launch {
-            val report = trainingPipeline.prepareDataset()
-            _uiState.update { it.copy(lastTrainingReport = report.message) }
+            feedbackStore.record(messageId, msg.content, fb)
+            learningManager.onFeedback(msg, fb)
         }
-    }
-
-    private fun detectAndRunTool(text: String): String? {
-        // placeholder — ابزارها از طریق AuraTools فراخوانی می‌شوند
-        return null
     }
 
     private fun refreshNetworkStatus() {
