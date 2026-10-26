@@ -69,7 +69,7 @@ class AgentOrchestrator(
 
     private suspend fun extractQuery(userText: String, modelName: String?): String {
         var q = userText
-            .replace(Regex("(?i)(جستجو|سرچ|search|گوگل)\s*(کن)?[:：]?"), "")
+            .replace(Regex("""(?i)(جستجو|سرچ|search|گوگل)\s*(کن)?[:：]?"""), "")
             .trim()
         if (q.length in 3..120) return q
         val decided = ai.quickDecide(
