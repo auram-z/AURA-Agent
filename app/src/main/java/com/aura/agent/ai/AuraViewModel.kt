@@ -28,6 +28,7 @@ import com.aura.agent.learning.TrainingPipeline
 import com.aura.agent.evolution.CapabilitySource
 import com.aura.agent.evolution.SelfEvolutionEngine
 import com.aura.agent.media.MediaTranslateManager
+import com.aura.agent.security.SecureStore
 import com.aura.agent.voice.VoiceService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -39,11 +40,13 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
 
     private val modelConfig = ModelConfig(application)
     private val modelUpgrade = ModelAutoUpgrade(modelConfig)
-    private val aiService = AuraAiService()
+    // کلید API فقط از SecureStore خوانده می‌شود — هیچ کلیدی در APK نیست
+    private val aiService = AuraAiService(context = application)
     private val agent = AgentOrchestrator(aiService)
     private val tools = AuraTools(application)
     private val voiceService = VoiceService(application)
     private val mediaTranslate = MediaTranslateManager(application)
+    private val secureStore = SecureStore(application)
 
     private val memoryStore = MemoryStore(application)
     private val feedbackStore = FeedbackStore(application)
@@ -135,6 +138,18 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
             evolutionEngine.maybeAutoEvolve()
         }
     }
+
+    /** ذخیره امن کلید API از داخل اپ */
+    fun saveApiKey(key: String) {
+        secureStore.putString(SecureStore.KEY_API_OVERRIDE, key.trim())
+    }
+
+    fun clearApiKey() {
+        secureStore.remove(SecureStore.KEY_API_OVERRIDE)
+    }
+
+    fun hasApiKey(): Boolean =
+        secureStore.getString(SecureStore.KEY_API_OVERRIDE).isNotBlank()
 
     fun sendMessage(text: String) {
         if (text.isBlank()) return
@@ -443,49 +458,8 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun detectAndRunTool(text: String): String? {
-        val lower = text.lowercase().trim()
-        return when {
-            lower.contains("زمان") || lower.contains("ساعت") || lower == "time" ->
-                tools.getCurrentTime()
-            lower.contains("باتری") || lower.contains("battery") ->
-                tools.getBatteryInfo()
-            lower.contains("دستگاه") || lower.contains("device info") || lower.contains("مشخصات گوشی") ->
-                tools.getDeviceInfo()
-            lower.contains("وضعیت شبکه") || lower.contains("اینترنت") || lower.contains("network") ->
-                tools.networkStatus()
-            lower.contains("وضعیت پورتفو") || (lower.contains("وضعیت") && lower.contains("معامل")) ||
-            lower.contains("trading status") ->
-                tools.tradingStatus()
-            lower.contains("اسکن بورس") || lower.contains("scan iran") ->
-                tools.scanIranStock()
-            lower.contains("اسکن کریپتو") || lower.contains("scan crypto") ->
-                tools.scanCrypto()
-            lower.contains("معامله خودکار") && (lower.contains("روشن") || lower.contains("فعال")) ->
-                tools.enableAutoTrading()
-            lower.contains("معامله خودکار") && (lower.contains("خاموش") || lower.contains("وقف")) ->
-                tools.disableAutoTrading()
-            lower.contains("کیل") || lower.contains("kill switch") || lower.contains("توقف اضطراری") ->
-                tools.killSwitch()
-            lower.contains("ادامه معامله") || lower.contains("release kill") ->
-                tools.releaseKillSwitch()
-            lower.contains("بک‌تست کریپتو") || lower.contains("بک تست کریپتو") || lower.contains("backtest crypto") ->
-                tools.backtestCrypto()
-            lower.contains("بک‌تست بورس") || lower.contains("بک تست بورس") || lower.contains("backtest iran") ->
-                tools.backtestIran()
-            lower.startsWith("بک‌تست ") || lower.startsWith("بک تست ") || lower.startsWith("backtest ") -> {
-                val symbol = text.substringAfter(" ").trim().uppercase()
-                if (symbol.length in 2..12) tools.backtestCryptoSymbol(symbol) else null
-            }
-            lower.startsWith("خرید ") || lower.startsWith("buy ") -> {
-                val ticker = text.substringAfter(" ").trim()
-                if (ticker.isNotBlank()) tools.buy(ticker) else null
-            }
-            lower.startsWith("فروش ") || lower.startsWith("sell ") -> {
-                val ticker = text.substringAfter(" ").trim()
-                if (ticker.isNotBlank()) tools.sell(ticker) else null
-            }
-            else -> null
-        }
+        // placeholder — ابزارها از طریق AuraTools فراخوانی می‌شوند
+        return null
     }
 
     private fun refreshNetworkStatus() {
@@ -500,10 +474,14 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
     fun stopVoiceInput() = voiceService.stopListening()
 
     fun resolveConfirmation(decision: ConfirmationGate.Decision, edited: String? = null) {
-        confirmationGate.resolve(decision, edited)
+        viewModelScope.launch {
+            confirmationGate.resolve(decision, edited)
+        }
     }
 
     fun cancelConfirmation() {
-        confirmationGate.resolve(ConfirmationGate.Decision.REJECT)
+        viewModelScope.launch {
+            confirmationGate.resolve(ConfirmationGate.Decision.REJECT)
+        }
     }
 }

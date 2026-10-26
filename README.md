@@ -22,6 +22,7 @@
 | 🔗 همگام با نسخه آنلاین | ✅ KnowledgeSync |
 | 📱 اندروید + وب | ✅ |
 | ⚙️ تشخیص سخت‌افزار و مسیریابی اجرا | ✅ |
+| 🔐 کلید API فقط در SecureStore (نه داخل APK) | ✅ |
 
 جزئیات هسته: [`docs/core-architecture.md`](docs/core-architecture.md)  
 جزئیات دانش: [`docs/knowledge-architecture.md`](docs/knowledge-architecture.md)  
@@ -36,6 +37,15 @@
 - تشخیص تناقض بین ادعاها
 - در حالت Hybrid: اگر اطمینان محلی کم باشد → لایه ابری (اختیاری)
 - نسخه وب: جستجوی اینترنت آزاد + بسته دانش برای گوشی
+
+---
+
+## امنیت کلید API
+
+کلید API **هرگز** داخل APK پخته نمی‌شود.
+
+- اندروید: فقط از `SecureStore` (EncryptedSharedPreferences + Android Keystore) در زمان اجرا خوانده می‌شود.
+- وب: در `localStorage` مرورگر ذخیره می‌شود (هشدار: فقط روی دستگاه خودتان استفاده کنید).
 
 ---
 
@@ -55,13 +65,13 @@
 cd web && python -m http.server 8080
 ```
 
-`local.properties` (اختیاری برای Remote):
+`local.properties` (اختیاری — فقط برای پیش‌فرض مدل/آدرس، نه کلید):
 ```properties
-AURA_API_KEY=...
+AURA_BASE_URL=https://api.x.ai/v1
 AURA_MODEL=grok-4.7
 ```
 
-بدون کلید هم هسته محلی کامل کار می‌کند.
+بدون کلید هم هسته محلی کامل کار می‌کند. کلید را از داخل اپ وارد کنید.
 
 ---
 

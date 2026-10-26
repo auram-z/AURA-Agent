@@ -17,11 +17,12 @@ private val Context.modelConfigStore: DataStore<Preferences> by preferencesDataS
 
 /**
  * تنظیمات مدل API — پیش‌فرض آخرین پرچمدار xAI و ارتقای خودکار.
+ * کلید API اینجا ذخیره نمی‌شود (فقط در SecureStore).
  */
 class ModelConfig(private val context: Context) {
 
     companion object {
-        /** آخرین پرچمدار شناخته‌شده (سپتامبر ۲۰۲۶) */
+        /** آخرین پرچمدار شناخته‌شده */
         const val FLAGSHIP_DEFAULT = "grok-4.7"
 
         /** alias برای دنبال کردن آخرین نسخه پایدار خانواده */
