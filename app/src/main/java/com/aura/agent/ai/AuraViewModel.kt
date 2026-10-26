@@ -457,14 +457,14 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                 { tools.networkStatus() }
 
             // پورتفو / وضعیت معامله
-            lower.contains("وضعیت معامله") || lower.contains("پورتفو") || lower.contains("trading status") ||
-            lower == "وضعیت" && lower.length < 12 ->
+            lower.contains("وضعیت معامله") || lower.contains("پورتفو") || lower.contains("trading status") ->
                 { tools.tradingStatus() }
 
             // اسکن بازار
             lower.contains("اسکن کریپتو") || lower.contains("scan crypto") || lower == "کریپتو" ->
                 { tools.scanCrypto() }
-            lower.contains("اسکن بورس") || lower.contains("scan iran") || lower.contains("بورس") ->
+            lower.contains("اسکن بورس") || lower.contains("scan iran") ||
+            (lower.contains("بورس") && !lower.contains("بک")) ->
                 { tools.scanIranStock() }
 
             // معامله خودکار / کیل‌سوییچ
@@ -515,10 +515,7 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                 if (it.id == messageId) it.copy(feedback = fb) else it
             })
         }
-        viewModelScope.launch {
-            feedbackStore.record(messageId, msg.content, fb)
-            learningManager.onFeedback(msg, fb)
-        }
+        learningManager.submitThumbs(messageId, thumbsUp, msg.content)
     }
 
     private fun refreshNetworkStatus() {
