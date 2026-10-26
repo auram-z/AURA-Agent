@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="aura_bg">#0A0E17</color>
+    <color name="aura_surface">#0F172A</color>
+    <color name="aura_primary">#0EA5E9</color>
+    <color name="aura_accent">#38BDF8</color>
+    <color name="aura_text">#F8FAFC</color>
+    <color name="aura_muted">#94A3B8</color>
+    <color name="ic_launcher_background">#0A0E17</color>
+</resources>

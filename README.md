@@ -23,6 +23,7 @@
 | 📱 اندروید + وب | ✅ |
 | ⚙️ تشخیص سخت‌افزار و مسیریابی اجرا | ✅ |
 | 🔐 کلید API فقط در SecureStore (نه داخل APK) | ✅ |
+| 🧪 تست واحد پایه | ✅ |
 
 جزئیات هسته: [`docs/core-architecture.md`](docs/core-architecture.md)  
 جزئیات دانش: [`docs/knowledge-architecture.md`](docs/knowledge-architecture.md)  
@@ -44,8 +45,9 @@
 
 کلید API **هرگز** داخل APK پخته نمی‌شود.
 
-- اندروید: فقط از `SecureStore` (EncryptedSharedPreferences + Android Keystore) در زمان اجرا خوانده می‌شود.
-- وب: در `localStorage` مرورگر ذخیره می‌شود (هشدار: فقط روی دستگاه خودتان استفاده کنید).
+- اندروید: فقط از `SecureStore` (EncryptedSharedPreferences + Android Keystore) در زمان اجرا.
+- وب: در `localStorage` مرورگر (فقط روی دستگاه خودتان).
+- اگر Keystore دستگاه پاک شود، اسرار غیرقابل بازیابی‌اند (رفتار عمدی).
 
 ---
 
@@ -58,20 +60,44 @@
 
 ---
 
-## اجرا
+## بیلد و Gradle Wrapper
+
+اگر `gradle/wrapper/gradle-wrapper.jar` وجود نداشت:
 
 ```bash
-# وب (جستجوی آزاد + همگام‌سازی)
-cd web && python -m http.server 8080
+# یک‌بار روی ماشین توسعه (نیاز به Gradle سیستمی یا Android Studio)
+gradle wrapper --gradle-version 8.7
+# یا از Android Studio: File → Settings → Build → Gradle → استفاده از wrapper
 ```
 
-`local.properties` (اختیاری — فقط برای پیش‌فرض مدل/آدرس، نه کلید):
+سپس:
+
+```bash
+./gradlew :app:assembleDebug
+./gradlew :app:testDebugUnitTest
+```
+
+CI خودش Gradle 8.7 را نصب می‌کند و نیازی به jar در مخزن ندارد.
+
+`local.properties` (اختیاری — فقط پیش‌فرض مدل/آدرس، **نه کلید**):
+
 ```properties
 AURA_BASE_URL=https://api.x.ai/v1
 AURA_MODEL=grok-4.7
 ```
 
 بدون کلید هم هسته محلی کامل کار می‌کند. کلید را از داخل اپ وارد کنید.
+
+```bash
+# وب
+cd web && python -m http.server 8080
+```
+
+---
+
+## لایسنس
+
+MIT — فایل [`LICENSE`](LICENSE)
 
 ---
 
