@@ -7,13 +7,9 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.UUID
 import java.util.zip.ZipEntry
-import java.util.zip.ZipOutputStream
 import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
 
-/**
- * مدیریت snapshot قبل از هر تغییر تکاملی.
- * فاز E0: ایجاد/لیست/بازیابی از پوشه evolution/snapshots.
- */
 class SnapshotManager(private val context: Context) {
 
     companion object {
@@ -24,10 +20,6 @@ class SnapshotManager(private val context: Context) {
     private val root: File
         get() = File(context.filesDir, DIR_NAME).also { if (!it.exists()) it.mkdirs() }
 
-    /**
-     * از محتویات [sourceDir] یک zip می‌سازد و SnapshotInfo برمی‌گرداند.
-     * اگر sourceDir خالی/ناموجود باشد، snapshot خالی با متادیتا ثبت می‌شود.
-     */
     suspend fun create(label: String, sourceDir: File? = null): SnapshotInfo =
         withContext(Dispatchers.IO) {
             val id = "snap-${System.currentTimeMillis()}-${UUID.randomUUID().toString().take(8)}"
@@ -45,7 +37,6 @@ class SnapshotManager(private val context: Context) {
                         fileCount++
                     }
                 }
-                // همیشه یک متادیتا بنویس
                 zos.putNextEntry(ZipEntry("_aura_snapshot_meta.txt"))
                 zos.write(
                     "id=$id\nlabel=$label\ncreated=${System.currentTimeMillis()}\nfiles=$fileCount\n"
@@ -80,33 +71,32 @@ class SnapshotManager(private val context: Context) {
             ?: emptyList()
     }
 
-    /**
-     * بازیابی snapshot به [targetDir]. محتوای قبلی target پاک می‌شود.
-     */
     suspend fun restore(snapshotId: String, targetDir: File): Result<Unit> =
         withContext(Dispatchers.IO) {
             val zip = File(root, "$snapshotId.zip")
             if (!zip.exists()) {
-                return@withContext Result.failure(
-                    IllegalArgumentException("Snapshot پیدا نشد: $snapshotId")
-                )
-            }
-            runCatching {
-                if (targetDir.exists()) targetDir.deleteRecursively()
-                targetDir.mkdirs()
-                ZipInputStream(zip.inputStream().buffered()).use { zis ->
-                    var entry = zis.nextEntry
-                    while (entry != null) {
-                        if (!entry.isDirectory && entry.name != "_aura_snapshot_meta.txt") {
-                            val out = File(targetDir, entry.name)
-                            out.parentFile?.mkdirs()
-                            out.outputStream().use { zis.copyTo(it) }
+                Result.failure(IllegalArgumentException("Snapshot پیدا نشد: $snapshotId"))
+            } else {
+                try {
+                    if (targetDir.exists()) targetDir.deleteRecursively()
+                    targetDir.mkdirs()
+                    ZipInputStream(zip.inputStream().buffered()).use { zis ->
+                        var entry = zis.nextEntry
+                        while (entry != null) {
+                            if (!entry.isDirectory && entry.name != "_aura_snapshot_meta.txt") {
+                                val out = File(targetDir, entry.name)
+                                out.parentFile?.mkdirs()
+                                out.outputStream().use { zis.copyTo(it) }
+                            }
+                            zis.closeEntry()
+                            entry = zis.nextEntry
                         }
-                        zis.closeEntry()
-                        entry = zis.nextEntry
                     }
+                    Log.i(TAG, "Restored snapshot $snapshotId → ${targetDir.absolutePath}")
+                    Result.success(Unit)
+                } catch (e: Exception) {
+                    Result.failure(e)
                 }
-                Log.i(TAG, "Restored snapshot $snapshotId → ${targetDir.absolutePath}")
             }
         }
 
@@ -114,7 +104,6 @@ class SnapshotManager(private val context: Context) {
         File(root, "$snapshotId.zip").delete()
     }
 
-    /** نگه داشتن فقط [keep] آخرین snapshot */
     suspend fun prune(keep: Int) = withContext(Dispatchers.IO) {
         val files = root.listFiles()
             ?.filter { it.isFile && it.name.endsWith(".zip") }

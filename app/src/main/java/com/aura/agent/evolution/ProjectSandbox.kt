@@ -6,13 +6,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 
-/**
- * فضای ایزوله برای تغییرات تکاملی.
- * فاز E1: فهرست ماژول‌ها، مسیرهای مجاز، خواندن/نوشتن در workspace روی دستگاه.
- *
- * توجه: سورس کامل اپ داخل APK نیست؛ workspace یک درخت کاری جداست
- * که CodeGenerator (فاز E2) در آن فایل می‌سازد.
- */
 class ProjectSandbox(
     private val context: Context,
     private val safety: SafetyPolicy = SafetyPolicy()
@@ -22,22 +15,10 @@ class ProjectSandbox(
         private const val TAG = "AuraSandbox"
         private const val WORKSPACE = "evolution/workspace"
 
-        /** ماژول‌های شناخته‌شده پروژه AURA (برای تشخیص و plan) */
         val KNOWN_MODULES = listOf(
-            "core",
-            "ai",
-            "ai/tools",
-            "learning",
-            "data",
-            "voice",
-            "media",
-            "trading",
-            "trading/data",
-            "trading/models",
-            "ui",
-            "ui/theme",
-            "security",
-            "evolution"
+            "core", "ai", "ai/tools", "learning", "data", "voice", "media",
+            "trading", "trading/data", "trading/models", "ui", "ui/theme",
+            "security", "evolution"
         )
 
         val MODULE_TO_PATH = mapOf(
@@ -68,7 +49,6 @@ class ProjectSandbox(
 
     fun isPathAllowed(relativePath: String): Boolean = safety.isPathAllowed(relativePath)
 
-    /** فهرست فایل‌های فعلی داخل workspace (نسبی) */
     suspend fun listWorkspaceFiles(): List<String> = withContext(Dispatchers.IO) {
         val root = workspaceDir
         if (!root.exists()) return@withContext emptyList()
@@ -93,24 +73,31 @@ class ProjectSandbox(
     suspend fun writeFile(relativePath: String, content: String): Result<Unit> =
         withContext(Dispatchers.IO) {
             if (!isPathAllowed(relativePath)) {
-                return@withContext Result.failure(SecurityException("مسیر غیرمجاز: $relativePath"))
-            }
-            runCatching {
-                val f = File(workspaceDir, relativePath)
-                f.parentFile?.mkdirs()
-                f.writeText(content, Charsets.UTF_8)
-                Log.i(TAG, "Wrote ${content.length} bytes → $relativePath")
+                Result.failure(SecurityException("مسیر غیرمجاز: $relativePath"))
+            } else {
+                try {
+                    val f = File(workspaceDir, relativePath)
+                    f.parentFile?.mkdirs()
+                    f.writeText(content, Charsets.UTF_8)
+                    Log.i(TAG, "Wrote ${content.length} bytes → $relativePath")
+                    Result.success(Unit)
+                } catch (e: Exception) {
+                    Result.failure(e)
+                }
             }
         }
 
     suspend fun deleteFile(relativePath: String): Result<Unit> = withContext(Dispatchers.IO) {
         if (!isPathAllowed(relativePath)) {
-            return@withContext Result.failure(SecurityException("مسیر غیرمجاز: $relativePath"))
-        }
-        runCatching {
-            val f = File(workspaceDir, relativePath)
-            if (f.exists()) f.delete()
-            Unit
+            Result.failure(SecurityException("مسیر غیرمجاز: $relativePath"))
+        } else {
+            try {
+                val f = File(workspaceDir, relativePath)
+                if (f.exists()) f.delete()
+                Result.success(Unit)
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
         }
     }
 
