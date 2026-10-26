@@ -83,31 +83,33 @@ class AuraTools(private val context: Context) {
     }
 
     fun tradingStatus(): String = tradingEngine.getStatus()
-    fun scanIranStock(): String = tradingEngine.runScan(MarketType.IRAN_STOCK)
-    fun scanCrypto(): String = tradingEngine.runScan(MarketType.CRYPTO)
+
+    suspend fun scanIranStock(): String = tradingEngine.runScan(MarketType.IRAN_STOCK)
+    suspend fun scanCrypto(): String = tradingEngine.runScan(MarketType.CRYPTO)
+
     fun enableAutoTrading(): String = tradingEngine.setAutoTrading(true)
     fun disableAutoTrading(): String = tradingEngine.setAutoTrading(false)
     fun killSwitch(reason: String = "دستور کاربر"): String = tradingEngine.activateKillSwitch(reason)
     fun releaseKillSwitch(): String = tradingEngine.deactivateKillSwitch()
 
-    fun buy(ticker: String, market: String = "crypto"): String {
+    suspend fun buy(ticker: String, market: String = "crypto"): String {
         val m = if (market.contains("ایران") || market.contains("stock")) MarketType.IRAN_STOCK else MarketType.CRYPTO
         return tradingEngine.manualOrder(ticker, OrderSide.BUY, m)
     }
 
-    fun sell(ticker: String, market: String = "crypto"): String {
+    suspend fun sell(ticker: String, market: String = "crypto"): String {
         val m = if (market.contains("ایران") || market.contains("stock")) MarketType.IRAN_STOCK else MarketType.CRYPTO
         return tradingEngine.manualOrder(ticker, OrderSide.SELL, m)
     }
 
-    fun backtestCrypto(): String = backtestEngine.runCryptoBasket()
+    suspend fun backtestCrypto(): String = backtestEngine.runCryptoBasket()
 
-    fun backtestCryptoSymbol(ticker: String): String {
+    suspend fun backtestCryptoSymbol(ticker: String): String {
         val result = backtestEngine.runCrypto(ticker)
         return result.summary()
     }
 
-    fun backtestIran(): String = backtestEngine.runIranBasket()
+    suspend fun backtestIran(): String = backtestEngine.runIranBasket()
 
     fun getAvailableToolsDescription(): String {
         return """
@@ -129,7 +131,7 @@ class AuraTools(private val context: Context) {
         """.trim()
     }
 
-    fun executeTool(toolName: String, arg: String = ""): String {
+    suspend fun executeTool(toolName: String, arg: String = ""): String {
         return when (toolName.lowercase()) {
             "get_time", "time", "زمان" -> getCurrentTime()
             "get_battery", "battery", "باتری" -> getBatteryInfo()
