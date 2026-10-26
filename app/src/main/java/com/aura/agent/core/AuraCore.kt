@@ -13,6 +13,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 
+/**
+ * هسته مرکزی AURA — دستیار فوق‌هوشمند چندگانه با هوش اختصاصی خود.
+ *
+ * اصل بنیادین: هیچ وابستگی اجباری به هیچ هوش مصنوعی خارجی وجود ندارد.
+ * پیش‌فرض: LOCAL_ONLY. لایه Remote فقط وقتی کاربر صراحتاً انتخاب کند.
+ */
 class AuraCore(
     context: Context,
     private val memoryStore: MemoryStore,
@@ -38,7 +44,8 @@ class AuraCore(
         keyAvailable = { secureStore.getString(SecureStore.KEY_API_OVERRIDE).isNotBlank() }
     )
 
-    private val _policy = MutableStateFlow(RuntimePolicy.HYBRID)
+    // استقلال اول: پیش‌فرض فقط هسته اختصاصی محلی
+    private val _policy = MutableStateFlow(RuntimePolicy.LOCAL_ONLY)
     val policy: StateFlow<RuntimePolicy> = _policy.asStateFlow()
 
     private val _lastBackend = MutableStateFlow(BackendKind.LOCAL)
@@ -57,11 +64,12 @@ class AuraCore(
         return buildString {
             append("🌌 AURA Super Independent Core\n")
             append("• نسخه هسته: $CORE_VERSION\n")
+            append("• هویت: هوش اختصاصی AURA — بدون وابستگی اجباری به AI خارجی\n")
             append("• سیاست: ${_policy.value}\n")
             append("• آخرین backend: ${_lastBackend.value}\n")
-            append("• Local (مستقل): ✅ همیشه فعال\n")
-            append("• OnDevice: ${if (onDevice.isAvailable()) "✅" else "⏳ مدل نصب نشده"}\n")
-            append("• Remote: ${if (remote.isAvailable()) "✅ آماده (اختیاری)" else "⚪ غیرفعال / بدون کلید"}\n")
+            append("• Local (اختصاصی): ✅ همیشه فعال\n")
+            append("• OnDevice: ${if (onDevice.isAvailable()) "✅" else "⏳ مدل محلی نصب نشده"}\n")
+            append("• Remote: ${if (remote.isAvailable()) "⚪ اختیاری (کلید موجود)" else "⚪ غیرفعال"}\n")
             append("• پایگاه دانش: $kbCount تکه\n")
             append("\n")
             append(hardware.summary())
