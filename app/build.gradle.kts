@@ -86,6 +86,8 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 
     implementation("androidx.datastore:datastore-preferences:1.1.1")
+    // EncryptedSharedPreferences هنوز کاربردی است؛ در صورت پاک شدن Keystore داده‌ها از دست می‌روند.
+    // مهاجرت بعدی: DataStore + Tink یا Jetpack Security پایدار.
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
     implementation("androidx.work:work-runtime-ktx:2.9.1")
 

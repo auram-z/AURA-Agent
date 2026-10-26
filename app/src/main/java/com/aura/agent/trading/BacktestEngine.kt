@@ -7,7 +7,6 @@ import com.aura.agent.trading.models.MarketType
 import com.aura.agent.trading.models.OrderSide
 import com.aura.agent.trading.models.Symbol
 import com.aura.agent.trading.models.TradeSignal
-import kotlinx.coroutines.runBlocking
 import kotlin.math.abs
 import kotlin.math.max
 
@@ -67,6 +66,8 @@ data class BacktestResult(
 /**
  * بک‌تست walk-forward روی کندل‌ها
  * همان استراتژی SMA+RSI و قوانین ریسک 1.5% / معامله
+ *
+ * متدهای عمومی suspend هستند تا از runBlocking و قفل شدن UI جلوگیری شود.
  */
 class BacktestEngine(
     private val initialCapital: Double = 100_000_000.0,
@@ -76,62 +77,56 @@ class BacktestEngine(
     private val marketData = MarketDataProvider()
     private val signalEngine = SignalEngine()
 
-    fun runCrypto(ticker: String = "BTCUSDT", candleLimit: Int = 200): BacktestResult {
-        return runBlocking {
-            val quote = marketData.getCryptoQuote(ticker)
-            val candles = quote?.candles ?: emptyList()
-            // اگر کندل کم بود، دوباره با حداکثر بیشتر دریافت کن
-            val series = if (candles.size >= 30) {
-                candles
-            } else {
-                marketData.getCryptoWatchlist().find {
-                    it.symbol.ticker.contains(ticker.replace("USDT", ""), ignoreCase = true)
-                }?.candles ?: candles
+    suspend fun runCrypto(ticker: String = "BTCUSDT", candleLimit: Int = 200): BacktestResult {
+        val quote = marketData.getCryptoQuote(ticker)
+        val candles = quote?.candles ?: emptyList()
+        // اگر کندل کم بود، دوباره با حداکثر بیشتر دریافت کن
+        val series = if (candles.size >= 30) {
+            candles
+        } else {
+            marketData.getCryptoWatchlist().find {
+                it.symbol.ticker.contains(ticker.replace("USDT", ""), ignoreCase = true)
+            }?.candles ?: candles
+        }
+        return runOnCandles(
+            ticker = quote?.symbol?.ticker ?: ticker,
+            market = MarketType.CRYPTO,
+            candles = series
+        )
+    }
+
+    suspend fun runCryptoBasket(): String {
+        val quotes = marketData.getCryptoWatchlist()
+        if (quotes.isEmpty()) return "❌ داده کریپتو دریافت نشد."
+
+        val results = quotes.map { q ->
+            runOnCandles(q.symbol.ticker, MarketType.CRYPTO, q.candles)
+        }
+
+        return buildString {
+            append("📈 بک‌تست سبد کریپتو (SMA+RSI)\n")
+            append("سرمایه اول هر نماد: ${String.format("%,.0f", initialCapital)}\n\n")
+            results.forEach { r ->
+                val sign = if (r.totalPnlPercent >= 0) "+" else ""
+                append("${r.ticker}: $sign${String.format("%.2f", r.totalPnlPercent)}% | ")
+                append("WR ${String.format("%.0f", r.winRate)}% | ")
+                append("${r.trades.size} trades | DD ${String.format("%.1f", r.maxDrawdownPercent)}%\n")
             }
-            runOnCandles(
-                ticker = quote?.symbol?.ticker ?: ticker,
-                market = MarketType.CRYPTO,
-                candles = series
-            )
+            val avg = results.map { it.totalPnlPercent }.average()
+            append("\nمیانگین بازده: ${if (avg >= 0) "+" else ""}${String.format("%.2f", avg)}%")
         }
     }
 
-    fun runCryptoBasket(): String {
-        return runBlocking {
-            val quotes = marketData.getCryptoWatchlist()
-            if (quotes.isEmpty()) return@runBlocking "❌ داده کریپتو دریافت نشد."
-
-            val results = quotes.map { q ->
-                runOnCandles(q.symbol.ticker, MarketType.CRYPTO, q.candles)
-            }
-
-            buildString {
-                append("📈 بک‌تست سبد کریپتو (SMA+RSI)\n")
-                append("سرمایه اول هر نماد: ${String.format("%,.0f", initialCapital)}\n\n")
-                results.forEach { r ->
-                    val sign = if (r.totalPnlPercent >= 0) "+" else ""
-                    append("${r.ticker}: $sign${String.format("%.2f", r.totalPnlPercent)}% | ")
-                    append("WR ${String.format("%.0f", r.winRate)}% | ")
-                    append("${r.trades.size} trades | DD ${String.format("%.1f", r.maxDrawdownPercent)}%\n")
-                }
-                val avg = results.map { it.totalPnlPercent }.average()
-                append("\nمیانگین بازده: ${if (avg >= 0) "+" else ""}${String.format("%.2f", avg)}%")
-            }
+    suspend fun runIranBasket(): String {
+        val quotes = marketData.getIranWatchlist()
+        val results = quotes.map { q ->
+            runOnCandles(q.symbol.ticker, MarketType.IRAN_STOCK, q.candles)
         }
-    }
-
-    fun runIranBasket(): String {
-        return runBlocking {
-            val quotes = marketData.getIranWatchlist()
-            val results = quotes.map { q ->
-                runOnCandles(q.symbol.ticker, MarketType.IRAN_STOCK, q.candles)
-            }
-            buildString {
-                append("📈 بک‌تست سبد بورس (داده نمونه)\n\n")
-                results.forEach { r ->
-                    val sign = if (r.totalPnlPercent >= 0) "+" else ""
-                    append("${r.ticker}: $sign${String.format("%.2f", r.totalPnlPercent)}% | WR ${String.format("%.0f", r.winRate)}% | ${r.trades.size} trades\n")
-                }
+        return buildString {
+            append("📈 بک‌تست سبد بورس (داده نمونه)\n\n")
+            results.forEach { r ->
+                val sign = if (r.totalPnlPercent >= 0) "+" else ""
+                append("${r.ticker}: $sign${String.format("%.2f", r.totalPnlPercent)}% | WR ${String.format("%.0f", r.winRate)}% | ${r.trades.size} trades\n")
             }
         }
     }
