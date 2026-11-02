@@ -14,6 +14,9 @@ import com.aura.agent.learning.KnowledgeStore
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.ConcurrentLinkedQueue
 
@@ -21,11 +24,7 @@ private val Context.coreHealStore: DataStore<Preferences> by preferencesDataStor
 
 /**
  * خودترمیم فوق‌هوشمند هسته AURA.
- *
- * هسته خودش را پایش می‌کند، ضعف‌ها و باگ‌های رفتاری را تشخیص می‌دهد
- * و فیکس‌های امن (آستانه confidence، وزن جستجوی دانش، یادداشت prompt،
- * کاهش اطمینان دانش متناقض، ثبت یافته در پایگاه دانش) را اعمال می‌کند.
- *
+ * پایش رفتاری + تشخیص ضعف + فیکس امن (threshold، دانش، تناقض، یادداشت).
  * هیچ تغییری در فایل‌های امنیتی یا build اعمال نمی‌شود.
  */
 class CoreSelfHealer(
@@ -43,9 +42,16 @@ class CoreSelfHealer(
         private val KEY_HEAL_COUNT = intPreferencesKey("heal_count")
         private val KEY_LAST_REPORT = stringPreferencesKey("last_report")
         private val KEY_NOTES = stringPreferencesKey("heal_notes")
-
-        /** آستانه پیش‌فرض پذیرش پاسخ LOCAL در HYBRID */
         const val DEFAULT_CONF_THRESHOLD = 0.70f
+
+        private fun pct(v: Float): String =
+            String.format(Locale.US, "%.0f", v * 100f)
+
+        private fun f2(v: Float): String =
+            String.format(Locale.US, "%.2f", v)
+
+        private fun f1(v: Float): String =
+            String.format(Locale.US, "%.1f", v)
     }
 
     data class InferenceSample(
@@ -62,9 +68,7 @@ class CoreSelfHealer(
         val code: String,
         val severity: String,
         val title: String,
-        val detail: String,
-        val autoFixed: Boolean = false,
-        val fixSummary: String = ""
+        val detail: String
     )
 
     data class HealReport(
@@ -106,13 +110,11 @@ class CoreSelfHealer(
         return title to content
     }
 
-    suspend fun lastReport(): String {
-        return context.coreHealStore.data.first()[KEY_LAST_REPORT].orEmpty()
-    }
+    suspend fun lastReport(): String =
+        context.coreHealStore.data.first()[KEY_LAST_REPORT].orEmpty()
 
-    suspend fun healNotes(): String {
-        return context.coreHealStore.data.first()[KEY_NOTES].orEmpty()
-    }
+    suspend fun healNotes(): String =
+        context.coreHealStore.data.first()[KEY_NOTES].orEmpty()
 
     suspend fun diagnoseAndHeal(force: Boolean = false): HealReport = mutex.withLock {
         val samples = recent.toList()
@@ -124,15 +126,13 @@ class CoreSelfHealer(
         else samples.map { it.confidence }.average().toFloat()
         val fallbackRate = if (samples.isEmpty()) 0f
         else samples.count { it.wasFallback }.toFloat() / samples.size
-        val localShare = if (samples.isEmpty()) 1f
-        else samples.count { it.backend == BackendKind.LOCAL }.toFloat() / samples.size
 
         if (samples.size >= 8 && fallbackRate >= 0.45f) {
             findings += Finding(
                 code = "HIGH_FALLBACK",
                 severity = "MEDIUM",
                 title = "نرخ پاسخ ضعیف محلی بالا",
-                detail = "از ${samples.size} استنتاج اخیر، ${(fallbackRate * 100).toInt()}% fallback ضعیف بود."
+                detail = "از ${samples.size} استنتاج، ${pct(fallbackRate)}% fallback ضعیف بود."
             )
         }
 
@@ -141,7 +141,7 @@ class CoreSelfHealer(
                 code = "LOW_AVG_CONF",
                 severity = "MEDIUM",
                 title = "میانگین اطمینان پایین",
-                detail = "avgConfidence=${\"%.2f\".format(avgConf)}"
+                detail = "avgConfidence=${f2(avgConf)}"
             )
         }
 
@@ -150,7 +150,7 @@ class CoreSelfHealer(
                 code = "KNOWLEDGE_POVERTY",
                 severity = "LOW",
                 title = "پایگاه دانش کم‌حجم",
-                detail = "فقط ${chunks.size} تکه دانش — هسته محلی ضعیف عمل می‌کند."
+                detail = "فقط ${chunks.size} تکه دانش."
             )
         }
 
@@ -161,7 +161,7 @@ class CoreSelfHealer(
                 code = "KNOWLEDGE_CONTRADICTION",
                 severity = "HIGH",
                 title = "تناقض جدی در پایگاه دانش",
-                detail = "$severeContradictions تناقض با شدت ≥ ۶۰٪"
+                detail = "$severeContradictions تناقض با شدت بالا"
             )
         }
 
@@ -170,12 +170,11 @@ class CoreSelfHealer(
                 code = "ONDEVICE_ABSENT",
                 severity = "LOW",
                 title = "موتور OnDevice فعال نیست",
-                detail = "مدل محلی نصب نشده — فقط LOCAL و در صورت نیاز Remote."
+                detail = "مدل محلی نصب نشده."
             )
         }
 
         var currentThreshold = getConfidenceThreshold()
-
         val newThreshold = when {
             fallbackRate >= 0.50f && samples.size >= 8 -> (currentThreshold - 0.05f).coerceAtLeast(0.50f)
             avgConf < 0.45f && samples.size >= 6 -> (currentThreshold - 0.03f).coerceAtLeast(0.52f)
@@ -185,7 +184,7 @@ class CoreSelfHealer(
         }
         if (kotlin.math.abs(newThreshold - currentThreshold) > 0.001f) {
             context.coreHealStore.edit { it[KEY_CONF_THRESHOLD] = newThreshold }
-            fixes += "آستانه confidence: ${\"%.2f\".format(currentThreshold)} → ${\"%.2f\".format(newThreshold)}"
+            fixes += "آستانه confidence: ${f2(currentThreshold)} → ${f2(newThreshold)}"
             currentThreshold = newThreshold
         }
 
@@ -203,7 +202,7 @@ class CoreSelfHealer(
                 it[KEY_SEARCH_TITLE_BOOST] = newTitle
                 it[KEY_SEARCH_CONTENT_BOOST] = newContent
             }
-            fixes += "وزن جستجو: title=${\"%.1f\".format(newTitle)} content=${\"%.1f\".format(newContent)}"
+            fixes += "وزن جستجو: title=${f1(newTitle)} content=${f1(newContent)}"
         }
 
         if (severeContradictions > 0 && analysis != null) {
@@ -218,9 +217,7 @@ class CoreSelfHealer(
                         demoted++
                     }
                 }
-            if (demoted > 0) {
-                fixes += "کاهش اطمینان $demoted جفت دانش متناقض"
-            }
+            if (demoted > 0) fixes += "کاهش اطمینان $demoted جفت دانش متناقض"
         }
 
         if (findings.isNotEmpty() || fixes.isNotEmpty()) {
@@ -229,15 +226,16 @@ class CoreSelfHealer(
                 append("خودتشخیص هسته AURA\n")
                 findings.forEach { append("• [${it.severity}] ${it.title}: ${it.detail}\n") }
                 if (fixes.isNotEmpty()) {
-                    append("فیکس‌های اعمال‌شده:\n")
+                    append("فیکس‌ها:\n")
                     fixes.forEach { append("• $it\n") }
                 }
             }
             runCatching {
+                val stamp = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date())
                 knowledgeStore.add(
                     KnowledgeStore.KnowledgeChunk(
                         id = UUID.randomUUID().toString(),
-                        title = "خودترمیم هسته — ${java.text.SimpleDateFormat(\"yyyy-MM-dd HH:mm\", java.util.Locale.US).format(java.util.Date())}",
+                        title = "خودترمیم هسته — $stamp",
                         content = body.take(900),
                         source = "core_self_healer",
                         language = "fa",
@@ -254,7 +252,7 @@ class CoreSelfHealer(
         }
 
         if (findings.any { it.code == "HIGH_FALLBACK" || it.code == "KNOWLEDGE_POVERTY" }) {
-            val note = "• وقتی دانش کافی نیست صریح بگو و پیشنهاد «یادت باشه» یا حالت Hybrid بده."
+            val note = "• وقتی دانش کافی نیست صریح بگو و پیشنهاد یادت باشه یا Hybrid بده."
             context.coreHealStore.edit { prefs ->
                 val prev = prefs[KEY_NOTES].orEmpty()
                 val merged = (prev.lines().filter { it.isNotBlank() } + note)
@@ -274,10 +272,10 @@ class CoreSelfHealer(
         val summary = buildString {
             append("🧬 خودترمیم هسته AURA\n")
             append("• نمونه‌های اخیر: ${samples.size}\n")
-            append("• میانگین confidence: ${\"%.0f\".format(avgConf * 100)}%\n")
-            append("• نرخ fallback: ${\"%.0f\".format(fallbackRate * 100)}%\n")
+            append("• میانگین confidence: ${pct(avgConf)}%\n")
+            append("• نرخ fallback: ${pct(fallbackRate)}%\n")
             append("• دانش: ${chunks.size} تکه\n")
-            append("• آستانه فعلی: ${\"%.2f\".format(currentThreshold)}\n")
+            append("• آستانه فعلی: ${f2(currentThreshold)}\n")
             if (findings.isEmpty() && fixes.isEmpty()) {
                 append("\n✅ هسته سالم — باگ رفتاری جدی یافت نشد.")
             } else {
@@ -307,15 +305,17 @@ class CoreSelfHealer(
 
     suspend fun quickStatus(): String {
         val samples = recent.toList()
-        val avg = if (samples.isEmpty()) "—" else "${\"%.0f\".format(samples.map { it.confidence }.average() * 100)}%"
-        val fb = if (samples.isEmpty()) "—" else "${\"%.0f\".format(samples.count { it.wasFallback }.toFloat() / samples.size * 100)}%"
+        val avg = if (samples.isEmpty()) "—"
+        else pct(samples.map { it.confidence }.average().toFloat()) + "%"
+        val fb = if (samples.isEmpty()) "—"
+        else pct(samples.count { it.wasFallback }.toFloat() / samples.size) + "%"
         val th = getConfidenceThreshold()
         val last = lastReport().take(200)
         return buildString {
             append("🧬 وضعیت خودترمیم:\n")
             append("• نمونه‌ها: ${samples.size}\n")
             append("• avg conf: $avg | fallback: $fb\n")
-            append("• threshold: ${\"%.2f\".format(th)}\n")
+            append("• threshold: ${f2(th)}\n")
             if (last.isNotBlank()) append("• آخرین گزارش: ${last.take(120)}…")
         }
     }
