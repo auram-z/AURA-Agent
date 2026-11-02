@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import java.util.Locale
 
 /**
  * هسته مرکزی AURA — دستیار فوق‌هوشمند چندگانه با هوش اختصاصی خود.
@@ -33,6 +34,8 @@ class AuraCore(
     companion object {
         private const val TAG = "AuraCore"
         const val CORE_VERSION = "3.2.1-super-independent-selfheal"
+
+        private fun f2(v: Float): String = String.format(Locale.US, "%.2f", v)
     }
 
     private val hardware = HardwareProfiler(context)
@@ -66,7 +69,8 @@ class AuraCore(
     suspend fun statusReport(): String {
         val p = hardware.profile()
         val kbCount = runCatching { knowledgeStore.chunks.first().size }.getOrDefault(0)
-        val threshold = runCatching { selfHealer.getConfidenceThreshold() }.getOrDefault(CoreSelfHealer.DEFAULT_CONF_THRESHOLD)
+        val threshold = runCatching { selfHealer.getConfidenceThreshold() }
+            .getOrDefault(CoreSelfHealer.DEFAULT_CONF_THRESHOLD)
         val healQuick = runCatching { selfHealer.quickStatus() }.getOrDefault("")
         return buildString {
             append("🌌 AURA Super Independent Core\n")
@@ -78,7 +82,7 @@ class AuraCore(
             append("• OnDevice: ${if (onDevice.isAvailable()) "✅" else "⏳ مدل محلی نصب نشده"}\n")
             append("• Remote: ${if (remote.isAvailable()) "⚪ اختیاری (کلید موجود)" else "⚪ غیرفعال"}\n")
             append("• پایگاه دانش: $kbCount تکه\n")
-            append("• آستانه confidence پویا: ${String.format(java.util.Locale.US, \"%.2f\", threshold)}\n")
+            append("• آستانه confidence پویا: ${f2(threshold)}\n")
             append("\n")
             append(hardware.summary())
             if (healQuick.isNotBlank()) {
