@@ -31,7 +31,7 @@ data class AuraUiState(
     val lastTrainingReport: String? = null,
     val autoLearnEnabled: Boolean = true,
     val activeModel: String = "grok-4.7",
-    /** LOCAL_ONLY | HYBRID | REMOTE_PREFERRED */
-    val runtimePolicy: String = "HYBRID",
+    /** LOCAL_ONLY | HYBRID | REMOTE_PREFERRED — پیش‌فرض استقلال کامل */
+    val runtimePolicy: String = "LOCAL_ONLY",
     val activeBackend: String = "LOCAL"
 )

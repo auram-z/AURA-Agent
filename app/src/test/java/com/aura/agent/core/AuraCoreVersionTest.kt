@@ -11,11 +11,16 @@ class AuraCoreVersionTest {
 
     @Test
     fun coreVersion_isUnified() {
-        assertEquals("3.2.0-super-independent", AuraCore.CORE_VERSION)
+        assertEquals("3.2.1-super-independent-selfheal", AuraCore.CORE_VERSION)
     }
 
     @Test
     fun coreVersion_containsSuperIndependent() {
         assertTrue(AuraCore.CORE_VERSION.contains("super-independent"))
+    }
+
+    @Test
+    fun coreVersion_containsSelfHeal() {
+        assertTrue(AuraCore.CORE_VERSION.contains("selfheal"))
     }
 }
