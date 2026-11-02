@@ -30,14 +30,14 @@ class LocalKnowledgeBackend(
 
     override suspend fun generate(request: InferenceRequest): Result<InferenceResponse> {
         val text = request.userText.trim()
-        val lower = text.lowercase()
+        val lower = normalizeFa(text.lowercase())
 
         val (reply, confidence) = when {
             lower.matches(Regex(".*(سلام|درود|hi|hello).*")) ->
                 greeting() to 0.95f
 
             lower.contains("کی هستی") || lower.contains("تو کی") || lower.contains("who are you") ||
-            lower.contains("هسته") && (lower.contains("چی") || lower.contains("چیست")) ->
+            (lower.contains("هسته") && (lower.contains("چی") || lower.contains("چیست"))) ->
                 identity() to 0.98f
 
             lower.contains("ساعت") || lower.contains("زمان") || lower.contains("time") ->
@@ -76,6 +76,15 @@ class LocalKnowledgeBackend(
         )
     }
 
+    private fun normalizeFa(s: String): String {
+        return s
+            .replace('\u200c', ' ')
+            .replace('ي', 'ی')
+            .replace('ك', 'ک')
+            .replace(Regex("\\s+"), " ")
+            .trim()
+    }
+
     private suspend fun greeting(): String {
         val name = memoryStore.userName.first()
         return if (!name.isNullOrBlank())
@@ -90,6 +99,7 @@ class LocalKnowledgeBackend(
 • بدون وابستگی اجباری به هیچ شرکت یا API خارجی
 • حافظه و دانش فقط روی همین دستگاه
 • استدلال با پایگاه دانش + سطح اطمینان + تشخیص تناقض
+• خودترمیم خودکار ضعف‌های رفتاری
 • آنلاین فقط وقتی شما بخواهید (اختیاری)
 
 At your service.
@@ -134,7 +144,7 @@ At your service.
                 append("تناقض جدی یافت نشد.")
             } else {
                 analysis.contradictions.take(5).forEach { c ->
-                    append("\n⚠️ شدت ${"%.0f".format(c.severity * 100)}%:\n")
+                    append("\n⚠️ شدت ${(c.severity * 100).toInt()}%:\n")
                     append("  الف) ${c.claimA.take(100)}\n")
                     append("  ب) ${c.claimB.take(100)}\n")
                 }
@@ -145,19 +155,14 @@ At your service.
         }
     }
 
-    /**
-     * استدلال از پایگاه دانش با امتیاز اطمینان.
-     * اگر چند منبع مرتبط باشد، آن‌ها را ترکیب و سطح اطمینان کلی را اعلام می‌کند.
-     */
     private suspend fun reasonFromKnowledge(query: String): Pair<String, Float>? {
         val hits = knowledgeStore.search(query, limit = 5)
         if (hits.isEmpty()) return null
 
         val top = hits.first()
         if (top.confidence < 0.35f && hits.size == 1) {
-            // دانش ضعیف — با احتیاط
             return buildString {
-                append("📖 از پایگاه دانش (اطمینان پایین ${"%.0f".format(top.confidence * 100)}%):\n")
+                append("📖 از پایگاه دانش (اطمینان پایین ${(top.confidence * 100).toInt()}%):\n")
                 append("**${top.title}**\n${top.content}\n")
                 append("\n⚠️ این مورد اطمینان کمی دارد؛ در صورت امکان با منبع دیگر تأیید کنید.")
             } to top.confidence
@@ -165,7 +170,7 @@ At your service.
 
         val avgConf = hits.map { it.confidence }.average().toFloat()
         return buildString {
-            append("📖 پاسخ از هسته مستقل (اطمینان میانگین ${"%.0f".format(avgConf * 100)}%):\n\n")
+            append("📖 پاسخ از هسته مستقل (اطمینان میانگین ${(avgConf * 100).toInt()}%):\n\n")
             hits.take(3).forEachIndexed { i, h ->
                 val pct = (h.confidence * 100).toInt()
                 append("${i + 1}. [${pct}%] **${h.title}**\n")
@@ -185,6 +190,7 @@ At your service.
 • سؤال از حافظه و دانش ذخیره‌شده
 • «یادت باشه …» برای ذخیره دانش
 • «وضعیت دانش» / «تناقض» برای بررسی پایگاه
+• «خودترمیم» — تشخیص و رفع خودکار ضعف‌های هسته
 • بدون اینترنت کامل کار می‌کند
 • برای جستجوی جهان: نسخه آنلاین یا حالت Hybrid
 
@@ -197,7 +203,8 @@ At your service.
 پیشنهاد:
 1. اگر آنلاین هستید: «جستجو کن ${text.take(40)}» یا حالت Hybrid
 2. دانش مرتبط را با «یادت باشه …» ذخیره کنید
-3. از نسخه آنلاین AURA بسته دانش بگیرید و همگام کنید
+3. «خودترمیم» را اجرا کنید تا هسته خودش را تقویت کند
+4. از نسخه آنلاین AURA بسته دانش بگیرید و همگام کنید
 
 درخواست: «${text.take(100)}»
     """.trim()
