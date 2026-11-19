@@ -15,8 +15,8 @@ android {
         applicationId = "com.aura.agent"
         minSdk = 26
         targetSdk = 35
-        versionCode = 12
-        versionName = "3.2.0-super-independent"
+        versionCode = 13
+        versionName = "3.2.1-super-independent"
 
         // فقط مقادیر غیرحساس در BuildConfig. کلید API هرگز داخل APK پخته نمی‌شود.
         val localProps = Properties()
