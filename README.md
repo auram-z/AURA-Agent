@@ -4,7 +4,53 @@
 
 > *"At your service."*
 
-**نسخه: 3.2.0-super-independent**
+**نسخه: 3.2.1-super-independent**
+
+---
+
+## 📦 نصب (سریع‌ترین روش)
+
+### روش ۱ — دانلود APK آماده (بدون نیاز به بیلد)
+
+1. به صفحه [Actions](https://github.com/auram-z/AURA-Agent/actions) بروید.
+2. آخرین workflow موفق (**Android Build**) را باز کنید.
+3. در بخش **Artifacts** فایل `aura-debug-apk` را دانلود کنید.
+4. فایل `.apk` را روی گوشی اندروید نصب کنید (ممکن است نیاز به فعال‌سازی «نصب از منابع ناشناس» باشد).
+
+> هسته محلی **بدون کلید API** کامل کار می‌کند. کلید را بعداً از داخل اپ می‌توانید وارد کنید.
+
+### روش ۲ — بیلد محلی با Android Studio
+
+1. پروژه را کلون کنید:
+   ```bash
+   git clone https://github.com/auram-z/AURA-Agent.git
+   cd AURA-Agent
+   ```
+2. پروژه را در **Android Studio** (نسخه‌های جدید) باز کنید.
+3. صبر کنید Gradle sync کامل شود.
+4. از منوی **Build → Build Bundle(s) / APK(s) → Build APK(s)** یا دکمه Run را بزنید.
+5. APK در مسیر زیر ساخته می‌شود:
+   `app/build/outputs/apk/debug/app-debug.apk`
+
+### روش ۳ — خط فرمان
+
+```bash
+# اگر gradle-wrapper.jar ندارید (یک‌بار):
+gradle wrapper --gradle-version 8.7
+
+# بیلد
+./gradlew :app:assembleDebug
+
+# تست
+./gradlew :app:testDebugUnitTest
+```
+
+فایل `local.properties` (اختیاری — فقط پیش‌فرض مدل/آدرس، **نه کلید**):
+
+```properties
+AURA_BASE_URL=https://api.x.ai/v1
+AURA_MODEL=grok-4.7
+```
 
 ---
 
@@ -24,10 +70,12 @@
 | ⚙️ تشخیص سخت‌افزار و مسیریابی اجرا | ✅ |
 | 🔐 کلید API فقط در SecureStore (نه داخل APK) | ✅ |
 | 🧪 تست واحد پایه | ✅ |
+| 🛠️ خودترمیمی (CoreSelfHealer) | ✅ |
 
 جزئیات هسته: [`docs/core-architecture.md`](docs/core-architecture.md)  
 جزئیات دانش: [`docs/knowledge-architecture.md`](docs/knowledge-architecture.md)  
-همگام‌سازی آنلاین: [`docs/online-sync-architecture.md`](docs/online-sync-architecture.md)
+همگام‌سازی آنلاین: [`docs/online-sync-architecture.md`](docs/online-sync-architecture.md)  
+خودتکاملی: [`docs/self-evolution.md`](docs/self-evolution.md)
 
 ---
 
@@ -57,41 +105,17 @@
 - `سخت‌افزار` — RAM، CPU، شبکه
 - `فقط محلی` / `حالت ترکیبی` / `ترجیح ابری`
 - `وضعیت دانش` / `تناقض`
+- `وضعیت تکامل` / `تکامل کن` / `Rollback`
 
 ---
 
-## بیلد و Gradle Wrapper
-
-اگر `gradle/wrapper/gradle-wrapper.jar` وجود نداشت:
+## نسخه وب
 
 ```bash
-# یک‌بار روی ماشین توسعه (نیاز به Gradle سیستمی یا Android Studio)
-gradle wrapper --gradle-version 8.7
-# یا از Android Studio: File → Settings → Build → Gradle → استفاده از wrapper
-```
-
-سپس:
-
-```bash
-./gradlew :app:assembleDebug
-./gradlew :app:testDebugUnitTest
-```
-
-CI خودش Gradle 8.7 را نصب می‌کند و نیازی به jar در مخزن ندارد.
-
-`local.properties` (اختیاری — فقط پیش‌فرض مدل/آدرس، **نه کلید**):
-
-```properties
-AURA_BASE_URL=https://api.x.ai/v1
-AURA_MODEL=grok-4.7
-```
-
-بدون کلید هم هسته محلی کامل کار می‌کند. کلید را از داخل اپ وارد کنید.
-
-```bash
-# وب
 cd web && python -m http.server 8080
 ```
+
+سپس در مرورگر: http://localhost:8080
 
 ---
 
